@@ -499,6 +499,88 @@ const Wave = (() => {
   return { init, draw };
 })();
 
+/* --------------------------------------------------------------------------
+   Overlays
+   -----------------------------------------------------------------------
+   Fullscreen bio/dates/booking panels. One open/close motion (defined in
+   CSS: fade + slight rise), Esc and a click on the backdrop both close,
+   focus moves into the panel on open and is trapped there (Tab/Shift+Tab
+   cycle within it) and restored to the trigger button on close.
+   -------------------------------------------------------------------------- */
+const Overlays = (() => {
+  let active = null;
+  let lastFocused = null;
+
+  const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+
+  function focusableIn(container) {
+    return Array.from(container.querySelectorAll(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+  }
+
+  function open(name) {
+    const el = document.getElementById(`overlay-${name}`);
+    if (!el || el === active) return;
+    lastFocused = document.activeElement;
+    active = el;
+    el.removeAttribute('inert'); // must come before .focus() — an inert element can't receive it
+    el.setAttribute('aria-hidden', 'false');
+    el.dataset.open = 'true';
+    const closeBtn = el.querySelector('[data-overlay-close]');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function close() {
+    if (!active) return;
+    active.dataset.open = 'false';
+    active.setAttribute('aria-hidden', 'true');
+    active.setAttribute('inert', '');
+    active = null;
+    if (lastFocused) lastFocused.focus();
+  }
+
+  function onKeydown(e) {
+    if (!active) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusables = focusableIn(active);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  function onBackdropClick(e) {
+    // Only a direct click on the backdrop itself closes it — clicks inside
+    // .overlay-inner bubble here too, so this must not fire for those.
+    if (e.target === active) close();
+  }
+
+  function init() {
+    document.querySelectorAll('[data-overlay-target]').forEach((btn) => {
+      btn.addEventListener('click', () => open(btn.dataset.overlayTarget));
+    });
+    document.querySelectorAll('[data-overlay-panel]').forEach((panel) => {
+      panel.addEventListener('click', onBackdropClick);
+      const closeBtn = panel.querySelector('[data-overlay-close]');
+      if (closeBtn) closeBtn.addEventListener('click', close);
+    });
+    document.addEventListener('keydown', onKeydown);
+  }
+
+  return { init };
+})();
+
 /* -------------------------------------------------------------------------- */
 
 (() => {
@@ -510,6 +592,7 @@ const Wave = (() => {
   // decode lag; the context stays 'suspended' (no sound) until the tap.
   AudioEngine.preload();
   Wave.init();
+  Overlays.init();
 
   tapToEnter.addEventListener('click', async () => {
     if (body.dataset.state === 'awake') return;

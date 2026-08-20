@@ -40,28 +40,31 @@
     </button>
   </main>
 
-  <!-- Overlays: skeleton only for now, content wired in Phase 4 -->
-  <div class="overlay" id="overlay-bio" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="bio-title" hidden>
+  <div class="overlay" id="overlay-bio" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="bio-title" aria-hidden="true" inert>
     <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
     <div class="overlay-inner">
       <h2 id="bio-title">bio</h2>
-      <!-- TODO Phase 4: bio copy -->
+      <p class="overlay-text">crafting idiosyncratic rhythmic journeys that challenge the mind while compelling the body to move.</p>
     </div>
   </div>
 
-  <div class="overlay" id="overlay-dates" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="dates-title" hidden>
+  <div class="overlay" id="overlay-dates" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="dates-title" aria-hidden="true" inert>
     <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
     <div class="overlay-inner">
       <h2 id="dates-title">dates</h2>
-      <!-- TODO Phase 4: dates list -->
+      <ul class="dates-list">
+        <li><span class="date-day">13.09.2026</span><span class="date-venue">Torchyn, Bruxt</span></li>
+        <li><span class="date-day">03.10.2026</span><span class="date-venue">OPIK w/ Closer</span></li>
+      </ul>
     </div>
   </div>
 
-  <div class="overlay" id="overlay-booking" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="booking-title" hidden>
+  <div class="overlay" id="overlay-booking" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="booking-title" aria-hidden="true" inert>
     <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
     <div class="overlay-inner">
       <h2 id="booking-title">booking</h2>
-      <!-- TODO Phase 4: contact links -->
+      <p class="overlay-text">for bookings and inquiries, reach out via SoundCloud.</p>
+      <a class="overlay-link" href="https://soundcloud.com/diskevich" target="_blank" rel="noopener noreferrer">soundcloud.com/diskevich</a>
     </div>
   </div>
 

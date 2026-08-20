@@ -157,6 +157,12 @@ h2 {
   font-weight: 900;
   letter-spacing: -0.02em;
   text-transform: lowercase;
+  /* The wave sits behind at z-index 1; this makes the letterforms invert
+     wherever the line crosses them, so the wave visibly passes *through*
+     the name instead of just running behind a flat opaque shape. Plain
+     z-index stacking (used to keep .mark above the canvas) doesn't create
+     a blend-isolation boundary on its own, so this reaches the canvas. */
+  mix-blend-mode: difference;
 }
 
 .tagline {
@@ -309,13 +315,22 @@ body[data-state='awake'] .tap-to-enter {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  visibility: hidden;
-  transition: opacity var(--dur-medium) var(--ease-out-expo), visibility var(--dur-medium) var(--ease-out-expo);
+  pointer-events: none;
+  /* Focus/interaction gating is handled by the `inert` attribute (toggled
+     in JS), not visibility — visibility:hidden would block .focus() on the
+     close button at the exact moment we open, since its transition to
+     'visible' isn't guaranteed to have taken effect yet on that same tick. */
+  /* One signature motion: fade + a slight rise. No separate effects per
+     overlay, no per-element stagger — every overlay opens/closes the same
+     way, at the same duration, so it reads as one system. */
+  transform: translateY(14px);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
 }
 
 .overlay[data-open='true'] {
   opacity: 1;
-  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .overlay-inner {
@@ -329,6 +344,63 @@ body[data-state='awake'] .tap-to-enter {
   font-size: var(--fs-h2);
   text-transform: lowercase;
   margin-bottom: var(--space-md);
+}
+
+.overlay-text {
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  color: var(--color-fg-muted);
+  max-width: 36ch;
+  margin: 0 auto;
+}
+
+.dates-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dates-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-xs) var(--space-sm);
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+}
+
+.date-day {
+  color: var(--color-accent);
+}
+
+.date-venue {
+  color: var(--color-fg);
+}
+
+.overlay-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
+  margin-top: var(--space-md);
+  padding: 0 var(--space-2xs);
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  transition: color var(--dur-fast) var(--ease-out-expo);
+}
+
+.overlay-link:hover,
+.overlay-link:focus-visible {
+  color: var(--color-fg);
+}
+
+.overlay-link:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
 }
 
 .overlay-close {
