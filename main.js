@@ -40,10 +40,12 @@ function prefersReducedMotion() {
 /* --------------------------------------------------------------------------
    Synthetic placeholder loop
    -----------------------------------------------------------------------
-   TODO: replace with a real track.mp3 in the project root. Until then this
-   procedurally renders a ~30s obscure/hypnotic loop (four-on-the-floor kick
-   = bass, sparse minor-interval arpeggio = mid, filtered noise hats = high)
-   so the analyser always has real bass/mid/high content to react to.
+   Fallback only — the site now ships with a real track.mp3, so this path
+   normally never runs. Kept as a safety net for a deploy that's missing the
+   file (or a decode failure): procedurally renders a ~30s obscure/hypnotic
+   loop (four-on-the-floor kick = bass, sparse minor-interval arpeggio =
+   mid, filtered noise hats = high) so the analyser still has real
+   bass/mid/high content to react to instead of the site going silent.
    -------------------------------------------------------------------------- */
 // Yields back to the main thread periodically (Phase 6: this is what keeps
 // generateSyntheticLoop's ~400 Web Audio node-creation calls from forming
@@ -167,8 +169,9 @@ const AudioEngine = (() => {
     } catch (err) {
       usingSyntheticLoop = true;
       console.warn(
-        '[diskevich] track.mp3 not found — playing a generated placeholder loop. ' +
-          'TODO: drop a real track.mp3 in the project root to replace it.'
+        '[diskevich] track.mp3 missing or failed to decode — falling back to a generated ' +
+          'placeholder loop. Check that track.mp3 was actually included in the deploy.',
+        err
       );
       buffer = await generateSyntheticLoop(ctx.sampleRate);
     }
