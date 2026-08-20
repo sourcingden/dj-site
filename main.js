@@ -187,7 +187,14 @@ const AudioEngine = (() => {
     gainNode = ctx.createGain();
     gainNode.gain.value = muted ? 0 : 1;
 
-    analyser.connect(gainNode).connect(ctx.destination);
+    // Gain BEFORE the analyser (not after): the analyser has to measure
+    // what's actually audible. With gain downstream of it, muting only
+    // silenced the speakers — the analyser kept reading the full,
+    // unattenuated signal, so the wave kept dancing to music the visitor
+    // could no longer hear. This way, muted -> analyser reads silence ->
+    // bands decay toward 0 on their own; Wave's explicit pause() (below)
+    // makes that instant and dramatic instead of a several-frame fade.
+    gainNode.connect(analyser).connect(ctx.destination);
   }
 
   let preloadPromise = null;
@@ -224,7 +231,7 @@ const AudioEngine = (() => {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.loop = true;
-    source.connect(analyser);
+    source.connect(gainNode); // gain -> analyser -> destination, see loadBuffer()
     source.start(0);
   }
 
@@ -247,6 +254,15 @@ const AudioEngine = (() => {
   function toggleMute() {
     muted = !muted;
     if (gainNode && ctx) {
+      // cancelScheduledValues first: without it, if the wake sequence's
+      // fade-in ramp (start(), below) is still in flight — reachable simply
+      // by clicking mute within ~1.5s of the initial tap — that ramp keeps
+      // running completely uninterrupted, since a still-active
+      // linearRampToValueAtTime's own scheduled end time otherwise takes
+      // priority over a new setTargetAtTime call layered on top of it. Found
+      // by instrumenting the actual gain value over time, not by inspection:
+      // muting appeared to do nothing for up to a second and a half.
+      gainNode.gain.cancelScheduledValues(ctx.currentTime);
       gainNode.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.05);
     }
     return muted;
@@ -333,6 +349,19 @@ const Wave = (() => {
 
   const pointer = { x: 0, y: 0, active: false };
 
+  // Pause/dissolve (mute -> "pause"): the most recently rendered frame's
+  // inputs, cached so pause() — called from a click handler, not from
+  // inside draw() — can freeze the *actual last-seen* shape rather than
+  // recomputing something slightly different.
+  let lastT = 0;
+  let lastBands = { bass: 0, mid: 0, high: 0 };
+  let lastGlobalScale = 1;
+  let paused = false;
+  let dissolveStartTs = null;
+  let frozenPoints = [];
+  let particles = [];
+  const DISSOLVE_DURATION_S = 0.7;
+
   const color = { fg: '#f2ede4', accent: '#c97a3d' };
 
   function readColorTokens() {
@@ -411,6 +440,71 @@ const Wave = (() => {
       const y = midY + (displacement(u, t, bands, phaseShift, ampScale) + springY[i]) * globalScale;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
+    }
+  }
+
+  // Returns the main line's current on-screen points (same math tracePath
+  // uses for its main-line call: phaseShift 0, layer ampScale 1, yOffset 0)
+  // as plain {x,y} pairs — used to freeze a shape at the moment of pause,
+  // separate from the stroking path tracePath draws directly to ctx.
+  function capturePoints(t, bands, globalScale) {
+    const midY = height / 2;
+    const pts = new Array(pointCount + 1);
+    for (let i = 0; i <= pointCount; i++) {
+      const u = i / pointCount;
+      pts[i] = {
+        x: u * width,
+        y: midY + (displacement(u, t, bands, 0, 1) + springY[i]) * globalScale,
+      };
+    }
+    return pts;
+  }
+
+  // A few particles per point, not "millions" — canvas 2D animating actual
+  // millions of individually-simulated particles at 60fps isn't realistic
+  // on any device this site targets. This density (a few hundred, scaled
+  // with pointCount so it's lighter on mobile) already reads as a proper
+  // shatter/dust dissolve rather than a sparse scatter of dots.
+  const PARTICLES_PER_POINT = 3;
+
+  function spawnDissolveParticles(points) {
+    particles = [];
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      for (let k = 0; k < PARTICLES_PER_POINT; k++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 30 + Math.random() * 150;
+        particles.push({
+          x: p.x + (Math.random() - 0.5) * 4,
+          y: p.y + (Math.random() - 0.5) * 4,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 15, // slight upward drift, like dust lifting
+          size: 1 + Math.random() * 2.4,
+          life: 0,
+          maxLife: DISSOLVE_DURATION_S * (0.6 + Math.random() * 0.6),
+          color: Math.random() < 0.6 ? color.fg : color.accent,
+        });
+      }
+    }
+  }
+
+  function updateAndDrawParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        particles.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.95;
+      p.vy *= 0.95;
+      const fade = 1 - p.life / p.maxLife;
+      ctx.beginPath();
+      ctx.fillStyle = hexToRgba(p.color, fade * 0.9);
+      ctx.arc(p.x, p.y, Math.max(0.2, p.size * fade), 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -549,6 +643,70 @@ const Wave = (() => {
     return x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
   }
 
+  // The normal 4-layer stack (2 echoes + glow + main), shared between the
+  // regular awake/sleeping path and the dormant post-dissolve state — both
+  // are just "the wave at some globalScale", the only difference is what
+  // scale and whether it's driven by live audio.
+  function drawLayers(t, bands, globalScale) {
+    tracePath(t, bands, -420, 0.72, 10, globalScale);
+    ctx.strokeStyle = hexToRgba(color.fg, 0.08);
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    tracePath(t, bands, -220, 0.85, 5, globalScale);
+    ctx.strokeStyle = hexToRgba(color.fg, 0.16);
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Glow: one wide, low-alpha stroke under the main line — the cheap
+    // alternative to setting shadowBlur every frame.
+    tracePath(t, bands, 0, 1, 0, globalScale);
+    ctx.strokeStyle = hexToRgba(color.accent, 0.18);
+    ctx.lineWidth = 8;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    tracePath(t, bands, 0, 1, 0, globalScale);
+    ctx.strokeStyle = color.fg;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  // Pause ("mute" doubles as pause): freezes the wave at its last rendered
+  // shape, then that shape dissolves into particles and scatters — rather
+  // than continuing to animate to music the visitor can no longer hear
+  // (which is what happened before: gain sat downstream of the analyser,
+  // see AudioEngine.loadBuffer — fixed there, this is the dramatic,
+  // guaranteed-instant version of "stop reacting" on top of that fix).
+  // nowTs must be the same clock as the `t` passed to draw() (i.e.
+  // performance.now()/rAF timestamps), not an "effective" (possibly
+  // reduced-motion-frozen) time — the burst's own duration always runs in
+  // real time regardless of that.
+  function pause(nowTs) {
+    if (paused) return;
+    paused = true;
+    frozenPoints = capturePoints(lastT, lastBands, lastGlobalScale);
+    if (prefersReducedMotion()) {
+      // Skip the burst entirely — jump straight to the dormant state next
+      // frame — rather than still playing a ~700ms transition.
+      dissolveStartTs = nowTs - DISSOLVE_DURATION_S * 1000 - 1;
+      particles = [];
+    } else {
+      dissolveStartTs = nowTs;
+      spawnDissolveParticles(frozenPoints);
+    }
+  }
+
+  function resume() {
+    paused = false;
+    particles = [];
+    frozenPoints = [];
+    dissolveStartTs = null;
+  }
+
   function draw(t, dt, bands, wakeProgress) {
     // Reduced motion (Phase 6): freeze the time input to the shape math so
     // the idle-noise breathing and audio ripples stop animating on their
@@ -558,45 +716,59 @@ const Wave = (() => {
     // eases and settles normally; reduced motion targets automatic motion,
     // not a response to something the visitor is actively doing.
     const effectiveT = prefersReducedMotion() ? 0 : t;
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (paused) {
+      const dissolveElapsed = dissolveStartTs !== null ? (t - dissolveStartTs) / 1000 : Infinity;
+      const dissolveActive = dissolveElapsed < DISSOLVE_DURATION_S;
+
+      if (dissolveActive) {
+        const fade = 1 - dissolveElapsed / DISSOLVE_DURATION_S;
+        ctx.beginPath();
+        for (let i = 0; i < frozenPoints.length; i++) {
+          const p = frozenPoints[i];
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.strokeStyle = hexToRgba(color.fg, fade);
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+      }
+
+      updateAndDrawParticles(dt);
+
+      if (!dissolveActive) {
+        // Settled: the same barely-moving idle presentation as the pre-tap
+        // sleeping state — reads as "resting", not "broken/empty". Bands
+        // are ~0 anyway once actually muted (gain precedes the analyser),
+        // this just guarantees it regardless. stepPhysics keeps running so
+        // any pointer-spring offset decays cleanly rather than freezing
+        // mid-interaction.
+        stepPhysics(effectiveT, bands, dt);
+        drawLayers(effectiveT, bands, SLEEP_SCALE);
+      }
+
+      lastT = effectiveT;
+      lastBands = bands;
+      lastGlobalScale = SLEEP_SCALE;
+      return;
+    }
+
     // wakeProgress is 0 while sleeping, ramps 0->1 over the wake sequence
     // (Phase 7), and stays 1 once fully awake — the wave visibly unfurls
     // from barely-moving to full amplitude instead of snapping.
     const globalScale = SLEEP_SCALE + (1 - SLEEP_SCALE) * easeOutExpo(wakeProgress);
+    lastT = effectiveT;
+    lastBands = bands;
+    lastGlobalScale = globalScale;
 
     stepPhysics(effectiveT, bands, dt);
-
-    ctx.clearRect(0, 0, width, height);
-
-    // Echoes: faintest + furthest phase-shift drawn first (furthest back).
-    tracePath(effectiveT, bands, -420, 0.72, 10, globalScale);
-    ctx.strokeStyle = hexToRgba(color.fg, 0.08);
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-
-    tracePath(effectiveT, bands, -220, 0.85, 5, globalScale);
-    ctx.strokeStyle = hexToRgba(color.fg, 0.16);
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-
-    // Glow: one wide, low-alpha stroke under the main line — the cheap
-    // alternative to setting shadowBlur every frame.
-    tracePath(effectiveT, bands, 0, 1, 0, globalScale);
-    ctx.strokeStyle = hexToRgba(color.accent, 0.18);
-    ctx.lineWidth = 8;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-
-    // Main line.
-    tracePath(effectiveT, bands, 0, 1, 0, globalScale);
-    ctx.strokeStyle = color.fg;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
+    drawLayers(effectiveT, bands, globalScale);
   }
 
-  return { init, draw, refreshColors: readColorTokens };
+  return { init, draw, refreshColors: readColorTokens, pause, resume };
 })();
 
 /* --------------------------------------------------------------------------
@@ -750,6 +922,27 @@ const Overlays = (() => {
   Overlays.init();
   Cursor.init();
 
+  // Entrance (splits the name into per-letter spans so style.css can
+  // stagger them in on wake — see body[data-state='awake'] .artist-name
+  // .letter). aria-label carries the real accessible name; the letter
+  // spans themselves are aria-hidden, so screen readers get "diskevich"
+  // as one word rather than nine separately-announced characters. Text
+  // content only (no spaces) — fine for the name, which is all this is
+  // used for.
+  (function splitLetters(el) {
+    const text = el.textContent;
+    el.setAttribute('aria-label', text);
+    el.innerHTML = '';
+    text.split('').forEach((ch, i) => {
+      const span = document.createElement('span');
+      span.className = 'letter';
+      span.textContent = ch;
+      span.style.setProperty('--i', i);
+      span.setAttribute('aria-hidden', 'true');
+      el.appendChild(span);
+    });
+  })(document.querySelector('.artist-name'));
+
   // Wake sequence (Phase 7): one duration drives all three parts of the
   // reveal — the entry screen's own CSS fade (already using this token
   // since Phase 0), the wave's amplitude ramp, and the audio fade-in — so
@@ -783,6 +976,16 @@ const Overlays = (() => {
     const muted = AudioEngine.toggleMute();
     muteToggle.setAttribute('aria-pressed', String(muted));
     body.dataset.muted = String(muted);
+
+    // Mute doubles as pause for the wave, not just the speakers: freeze +
+    // dissolve into particles on mute, ease back in (reusing the same
+    // wake-unfurl ramp as the original tap) on unmute.
+    if (muted) {
+      Wave.pause(performance.now());
+    } else {
+      Wave.resume();
+      wakeStartTs = performance.now();
+    }
   });
 
   // Theme toggle. data-theme is already set on <html> by the inline

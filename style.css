@@ -258,6 +258,70 @@ body.has-custom-cursor * {
   color: var(--color-fg-muted);
 }
 
+/* ---- Entrance ----
+   Letters/tagline/nav/mute-toggle stay hidden until the tap, then cascade
+   in — reusing the same wake moment the wave-unfurl and audio fade-in are
+   already synced to (main.js's tap handler), not a separate trigger. Wrapped
+   entirely in this media query rather than just zeroing durations: under
+   reduced motion these elements should never pass through a hidden state
+   at all, they should just already be there — not "instantly revealed",
+   genuinely never hidden. theme-toggle is deliberately excluded: it has to
+   stay usable before the tap (see .theme-toggle's own z-index comment). */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(28px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .artist-name .letter {
+    display: inline-block;
+    opacity: 0;
+    transform: translateY(28px);
+  }
+
+  body[data-state='awake'] .artist-name .letter {
+    animation: rise-in 700ms var(--ease-out-expo) forwards;
+    /* --i is set per-span in main.js (splitLetters) */
+    animation-delay: calc(var(--i) * 35ms);
+  }
+
+  .tagline,
+  .nav-item,
+  .mute-toggle {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  body[data-state='awake'] .tagline {
+    animation: rise-in 600ms var(--ease-out-expo) forwards;
+    animation-delay: 480ms;
+  }
+
+  body[data-state='awake'] .nav-item {
+    animation: rise-in 600ms var(--ease-out-expo) forwards;
+  }
+  body[data-state='awake'] .nav-item:nth-child(1) {
+    animation-delay: 640ms;
+  }
+  body[data-state='awake'] .nav-item:nth-child(2) {
+    animation-delay: 700ms;
+  }
+  body[data-state='awake'] .nav-item:nth-child(3) {
+    animation-delay: 760ms;
+  }
+
+  body[data-state='awake'] .mute-toggle {
+    animation: rise-in 500ms var(--ease-out-expo) forwards;
+    animation-delay: 300ms;
+  }
+}
+
 /* ---- Nav ---- */
 .site-nav {
   position: fixed;
@@ -516,28 +580,52 @@ body[data-state='awake'] .tap-to-enter {
   color: var(--color-fg);
 }
 
-.overlay-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--tap-min);
+/* ---- Social links (booking overlay) ----
+   Icon + small caption rather than bare text — three inline SVGs (no icon
+   font/library), monoline strokes matching the favicon's wave glyph, tinted
+   via currentColor so they inherit the theme automatically. */
+.social-links {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-lg);
   margin-top: var(--space-md);
-  padding: 0 var(--space-2xs);
-  font-family: var(--font-text);
-  font-size: var(--fs-body);
-  color: var(--color-accent);
-  text-decoration: underline;
-  text-underline-offset: 4px;
+}
+
+.social-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  padding: var(--space-2xs);
+  color: var(--color-fg-muted);
+  text-decoration: none;
   transition: color var(--dur-fast) var(--ease-out-expo);
 }
 
-.overlay-link:hover,
-.overlay-link:focus-visible {
-  color: var(--color-fg);
+.social-link:hover,
+.social-link:focus-visible {
+  color: var(--color-accent);
 }
 
-.overlay-link:focus-visible {
+.social-link:focus-visible {
   outline: 1px solid var(--color-accent);
   outline-offset: 3px;
+}
+
+.social-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.social-label {
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
 }
 
 .overlay-close {
