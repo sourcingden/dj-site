@@ -127,8 +127,56 @@ h2 {
   inset: 0;
   pointer-events: none;
   z-index: 5;
-  /* film-grain texture: added in Phase 7, kept empty here so the layer
-     costs nothing until then */
+  /* CSS-only grain (feTurbulence, no image asset, no extra request) —
+     static, not animated. A flickering grain is common on award-site
+     hero treatments, but this site already commits to a perpetually
+     breathing canvas underneath; layering a second, independent
+     perpetual animation on top fights the calm-idle-state work from
+     Phase 6 for no real gain, so this stays a fixed texture. */
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---- Custom cursor (Phase 7) ----
+   Fine-pointer devices only; JS gates creation on !mobileMode and adds
+   .has-custom-cursor to <body>, so this rule is inert on touch. */
+body.has-custom-cursor,
+body.has-custom-cursor * {
+  cursor: none;
+}
+
+.cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: var(--color-accent);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 100;
+  transform: translate3d(-100px, -100px, 0);
+  transition: transform var(--dur-fast) var(--ease-out-expo), width var(--dur-fast) var(--ease-out-expo),
+    height var(--dur-fast) var(--ease-out-expo), margin var(--dur-fast) var(--ease-out-expo),
+    background-color var(--dur-fast) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo),
+    opacity var(--dur-fast) var(--ease-out-expo);
+}
+
+.cursor-dot--active {
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  background: transparent;
+  border-color: var(--color-accent);
+  opacity: 1;
+}
+
+.cursor-dot--hidden {
+  opacity: 0;
 }
 
 /* ---- Scene ---- */

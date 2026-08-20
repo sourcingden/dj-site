@@ -225,10 +225,19 @@ const AudioEngine = (() => {
     source.start(0);
   }
 
-  async function start() {
+  async function start(fadeInMs) {
     await preload(); // no-op await if already resolved; always safe
     if (audioUnavailable) return; // no-op: nothing to resume/play
     if (ctx.state === 'suspended') await ctx.resume();
+    // Wake sequence (Phase 7): sound rises from 0 rather than starting at
+    // full volume — sample-accurate native automation on the audio thread,
+    // not a JS-polled fade, so it stays smooth regardless of main-thread load.
+    if (fadeInMs && gainNode) {
+      const target = muted ? 0 : 1;
+      gainNode.gain.cancelScheduledValues(ctx.currentTime);
+      gainNode.gain.setValueAtTime(0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(target, ctx.currentTime + fadeInMs / 1000);
+    }
     play();
   }
 
@@ -525,13 +534,19 @@ const Wave = (() => {
   }
 
   // Concept spec: before the first tap the site is 'sleeping' — the wave
-  // should barely move, not breathe at full amplitude. (audio bands are
-  // already 0 pre-tap since nothing has played yet; this scales the idle
-  // motion too.) Phase 7 choreographs the actual wake transition on top of
-  // this; here it's a direct switch, not yet eased.
+  // should barely move, not breathe at full amplitude.
   const SLEEP_SCALE = 0.12;
 
-  function draw(t, dt, bands, awake) {
+  // Classic ease-out-expo, evaluated in JS so the canvas amplitude ramp can
+  // follow the same "fast start, long settle" character as the CSS token
+  // --ease-out-expo used for the entry-screen fade — not a byte-for-byte
+  // match (that would need a full cubic-bezier solver for one moment), just
+  // the same *feel*, so the wake reads as one coordinated motion.
+  function easeOutExpo(x) {
+    return x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+  }
+
+  function draw(t, dt, bands, wakeProgress) {
     // Reduced motion (Phase 6): freeze the time input to the shape math so
     // the idle-noise breathing and audio ripples stop animating on their
     // own — the wave becomes a static (but still organically-shaped, not a
@@ -540,7 +555,10 @@ const Wave = (() => {
     // eases and settles normally; reduced motion targets automatic motion,
     // not a response to something the visitor is actively doing.
     const effectiveT = prefersReducedMotion() ? 0 : t;
-    const globalScale = awake ? 1 : SLEEP_SCALE;
+    // wakeProgress is 0 while sleeping, ramps 0->1 over the wake sequence
+    // (Phase 7), and stays 1 once fully awake — the wave visibly unfurls
+    // from barely-moving to full amplitude instead of snapping.
+    const globalScale = SLEEP_SCALE + (1 - SLEEP_SCALE) * easeOutExpo(wakeProgress);
 
     stepPhysics(effectiveT, bands, dt);
 
@@ -576,6 +594,44 @@ const Wave = (() => {
   }
 
   return { init, draw };
+})();
+
+/* --------------------------------------------------------------------------
+   Cursor (Phase 7)
+   -----------------------------------------------------------------------
+   A small dot that follows the pointer and grows into a ring over anything
+   clickable — reinforces "this is interactive" precisely where the design
+   otherwise has almost no conventional affordances (no buttons-that-look-
+   like-buttons, no underlines except overlay links). Fine-pointer devices
+   only: touch has no hover state and the OS cursor is already correct
+   there, so this stays out of mobileMode's way entirely. Position updates
+   via CSS transform (compositor-only, not layout) with a short transition
+   for a touch of trailing lag rather than a robotic 1:1 snap; that
+   transition duration is the shared --dur-fast token, so it goes to 0
+   automatically under prefers-reduced-motion like everything else.
+   -------------------------------------------------------------------------- */
+const Cursor = (() => {
+  function init() {
+    if (mobileMode) return;
+
+    const dot = document.createElement('div');
+    dot.className = 'cursor-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(dot);
+    document.body.classList.add('has-custom-cursor');
+
+    window.addEventListener('mousemove', (e) => {
+      dot.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+      // e.target isn't always an Element (can be `document`, which has no
+      // .closest) — e.g. when the pointer is right at the document edge.
+      const overInteractive = !!(e.target && e.target.closest && e.target.closest('button, a'));
+      dot.classList.toggle('cursor-dot--active', overInteractive);
+    });
+    window.addEventListener('mouseleave', () => dot.classList.add('cursor-dot--hidden'));
+    window.addEventListener('mouseenter', () => dot.classList.remove('cursor-dot--hidden'));
+  }
+
+  return { init };
 })();
 
 /* --------------------------------------------------------------------------
@@ -687,14 +743,34 @@ const Overlays = (() => {
 
   Wave.init();
   Overlays.init();
+  Cursor.init();
+
+  // Wake sequence (Phase 7): one duration drives all three parts of the
+  // reveal — the entry screen's own CSS fade (already using this token
+  // since Phase 0), the wave's amplitude ramp, and the audio fade-in — so
+  // they read as one coordinated 1.5s moment instead of three unrelated
+  // timings that happen to overlap. Read from the CSS token rather than
+  // re-declaring 1500 here, so there's exactly one source of truth.
+  // Floored at 300ms: if prefers-reduced-motion was active at page load,
+  // --dur-wake reads as 0ms (per the Phase 0 token override) — harmless on
+  // its own since the ramp is skipped entirely whenever reduced motion is
+  // active at tap time (see both call sites below), but this keeps the
+  // captured constant itself safe to use (no divide-by-zero) for the edge
+  // case of someone switching the OS setting off between load and tap.
+  const WAKE_DURATION_MS = Math.max(
+    300,
+    parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dur-wake')) || 1500
+  );
+  let wakeStartTs = null;
 
   tapToEnter.addEventListener('click', async () => {
     if (body.dataset.state === 'awake') return;
     body.dataset.state = 'awake';
+    wakeStartTs = performance.now();
     // Reduced motion (Phase 6): dismiss the entry screen, but don't start
     // audio — nothing here should autoplay for these visitors.
     if (!prefersReducedMotion()) {
-      await AudioEngine.start();
+      await AudioEngine.start(WAKE_DURATION_MS);
     }
   });
 
@@ -734,6 +810,16 @@ const Overlays = (() => {
     if (!awake && ts - lastSleepDrawTs < SLEEP_REDRAW_INTERVAL_MS) return;
     lastSleepDrawTs = ts;
 
+    // Wake sequence (Phase 7): 0 while sleeping, ramps 0->1 over
+    // WAKE_DURATION_MS once tapped, 1 once fully awake. Reduced motion
+    // jumps straight to the end state instead of animating the ramp — a
+    // static wave shouldn't spend 1.5s visibly growing its own amplitude,
+    // that's still ambient motion, just a one-shot instead of a loop.
+    let wakeProgress = 0;
+    if (awake) {
+      wakeProgress = prefersReducedMotion() ? 1 : Math.min(1, (ts - wakeStartTs) / WAKE_DURATION_MS);
+    }
+
     // Phase 5: halve analysis frequency on mobile (still redraw the wave
     // every frame — only the relatively expensive getByteFrequencyData +
     // band-averaging read is skipped every other frame). The EMA smoothing
@@ -746,7 +832,7 @@ const Overlays = (() => {
     } else {
       bands = AudioEngine.update();
     }
-    Wave.draw(ts, dt / 1000, bands, awake);
+    Wave.draw(ts, dt / 1000, bands, wakeProgress);
   }
 
   // Phase 6: stop the loop entirely while the tab is hidden — no canvas
