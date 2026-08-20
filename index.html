@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>diskevich</title>
-  <meta name="description" content="diskevich — obscure, rare, groovy experience. Rare groove is not a genre. It's a grudge against everything obvious." />
+  <meta name="description" content="diskevich — obscure, rare, groovy experience. Where the unfamiliar becomes physical." />
 
   <!-- Inline SVG favicon: same wave motif as the site itself, zero extra
        request, and it still reads clearly at 16px (checked). -->
@@ -18,7 +18,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="diskevich" />
   <meta property="og:title" content="diskevich" />
-  <meta property="og:description" content="obscure, rare, groovy experience — rare groove is not a genre. It's a grudge against everything obvious." />
+  <meta property="og:description" content="obscure, rare, groovy experience — where the unfamiliar becomes physical." />
   <meta property="og:image" content="og-image.jpg" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
@@ -33,6 +33,27 @@
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;700;900&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="style.css" />
+
+  <!-- Sets data-theme before first paint (saved choice, else system
+       preference, else dark) so there's no flash of the wrong theme.
+       Inline and synchronous on purpose — style.css keys off this
+       attribute immediately on first render. -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('diskevich-theme');
+        var theme =
+          saved === 'light' || saved === 'dark'
+            ? saved
+            : window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 <body data-state="sleeping">
 
@@ -51,6 +72,10 @@
       <button type="button" class="nav-item" data-overlay-target="booking">booking</button>
     </nav>
 
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme">
+      <span class="theme-icon" aria-hidden="true"></span>
+    </button>
+
     <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio">
       <span class="mute-icon" aria-hidden="true"></span>
     </button>
@@ -65,7 +90,7 @@
     <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
     <div class="overlay-inner">
       <h2 id="bio-title">bio</h2>
-      <p class="overlay-text">Rare groove is not a genre. It's a grudge against everything obvious.</p>
+      <p class="overlay-text">Where the unfamiliar becomes physical. Every track a question, every groove an answer your body gives before your brain does.</p>
     </div>
   </div>
 

@@ -596,7 +596,7 @@ const Wave = (() => {
     ctx.stroke();
   }
 
-  return { init, draw };
+  return { init, draw, refreshColors: readColorTokens };
 })();
 
 /* --------------------------------------------------------------------------
@@ -723,8 +723,10 @@ const Overlays = (() => {
 
 (() => {
   const body = document.body;
+  const html = document.documentElement;
   const tapToEnter = document.getElementById('tap-to-enter');
   const muteToggle = document.getElementById('mute-toggle');
+  const themeToggle = document.getElementById('theme-toggle');
 
   // Start loading/generating audio once the page has painted and settled
   // (Phase 6: keeps the — possibly chunky, especially for the synthetic
@@ -781,6 +783,30 @@ const Overlays = (() => {
     const muted = AudioEngine.toggleMute();
     muteToggle.setAttribute('aria-pressed', String(muted));
     body.dataset.muted = String(muted);
+  });
+
+  // Theme toggle. data-theme is already set on <html> by the inline
+  // head script (saved choice -> system preference -> dark), before
+  // first paint; this just reflects that into aria-pressed and handles
+  // switching it. A manual choice here always wins from this point on
+  // and persists across visits — it does not keep following the OS
+  // setting if that changes later, which is the standard, expected
+  // behavior once someone has explicitly picked a theme.
+  themeToggle.setAttribute('aria-pressed', String(html.getAttribute('data-theme') === 'light'));
+
+  themeToggle.addEventListener('click', () => {
+    const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    html.setAttribute('data-theme', next);
+    themeToggle.setAttribute('aria-pressed', String(next === 'light'));
+    try {
+      localStorage.setItem('diskevich-theme', next);
+    } catch (e) {
+      // Private browsing / storage disabled: theme still applies for this
+      // session, it just won't persist across visits.
+    }
+    // --color-fg / --color-accent just changed; Wave cached them at
+    // init and only re-reads on demand, not every frame.
+    Wave.refreshColors();
   });
 
   // Dev/debug access, zero runtime cost otherwise: window.diskevichAudio.bands

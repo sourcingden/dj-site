@@ -74,6 +74,28 @@
   }
 }
 
+/* ---- Light theme ----
+   Same palette logic, inverted: cream void, warm-charcoal ink, a deeper
+   burnt-copper accent (the original copper drops to 2.84:1 on this
+   background — legible as a glow, not as text, so it's darkened here
+   specifically for the roles that render as text: nav hover, links,
+   date labels). fg/fg-muted/accent all independently re-verified at
+   >=4.5:1 against this background, not just carried over.
+   Applied via [data-theme] rather than prefers-color-scheme directly,
+   because the toggle (main.js) needs to be able to override the system
+   setting and have that choice persist. */
+:root[data-theme='light'] {
+  --color-bg: #f2ede4;
+  --color-bg-elevated: #e8e1d3;
+  --color-fg: #0a0a0a;
+  --color-fg-muted: #5c544a;
+  --color-accent: #9c5522;
+  --color-accent-soft: rgba(156, 85, 34, 0.35);
+  --color-accent-dim: rgba(156, 85, 34, 0.12);
+  --color-line: rgba(10, 10, 10, 0.12);
+  --color-overlay-bg: rgba(242, 237, 228, 0.96);
+}
+
 /* ---- Reset ---- */
 *,
 *::before,
@@ -95,6 +117,9 @@ body {
   font-family: var(--font-text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Theme switch crossfades rather than snaps (zeroes under
+     prefers-reduced-motion via --dur-medium, like everything else). */
+  transition: background-color var(--dur-medium) var(--ease-out-expo), color var(--dur-medium) var(--ease-out-expo);
 }
 
 button {
@@ -209,8 +234,20 @@ body.has-custom-cursor * {
      wherever the line crosses them, so the wave visibly passes *through*
      the name instead of just running behind a flat opaque shape. Plain
      z-index stacking (used to keep .mark above the canvas) doesn't create
-     a blend-isolation boundary on its own, so this reaches the canvas. */
+     a blend-isolation boundary on its own, so this reaches the canvas.
+
+     This specifically requires a near-black backdrop: difference(X, Y)
+     ~= X only when Y is near zero, which is why it reads as "normal"
+     cream text over dark and only inverts where the (also-cream) wave
+     line crosses it. Over a light backdrop the same math makes the
+     *entire* name render inverted/bright, not just the overlap — so
+     light theme turns this off below and falls back to plain layering
+     (still "the wave passes behind the name", just without the cut). */
   mix-blend-mode: difference;
+}
+
+:root[data-theme='light'] .artist-name {
+  mix-blend-mode: normal;
 }
 
 .tagline {
@@ -293,6 +330,58 @@ body.has-custom-cursor * {
 
 body[data-muted='true'] .mute-icon {
   background: var(--color-fg-muted);
+}
+
+/* ---- Theme toggle ----
+   Mirrors mute-toggle exactly (same size, same circle-with-a-dot
+   language) on the opposite corner, so the two feel like siblings
+   rather than two different UI vocabularies. State reads as filled dot
+   ("night") vs. hollow ring ("day") rather than a sun/moon icon —
+   consistent with the dot motif already used by the mute icon, the
+   cursor, and the tap-to-enter ring.
+
+   z-index 11, above .tap-to-enter's 10 (unlike mute-toggle, left at 3):
+   visual comfort should be adjustable immediately on landing, before
+   committing to the audio-gated tap — mute has nothing to mute yet at
+   that point, but a light-sensitive visitor shouldn't have to sit
+   through a full-brightness dark screen just to reach the switch. */
+.theme-toggle {
+  position: fixed;
+  top: calc(var(--space-md) + var(--safe-t));
+  left: calc(var(--space-md) + var(--safe-l));
+  z-index: 11;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-line);
+  border-radius: 50%;
+  transition: border-color var(--dur-fast) var(--ease-out-expo);
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.theme-toggle:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.theme-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: inset 0 0 0 1.5px transparent;
+  transition: background-color var(--dur-fast) var(--ease-out-expo), box-shadow var(--dur-fast) var(--ease-out-expo);
+}
+
+:root[data-theme='light'] .theme-icon {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
 }
 
 /* ---- Tap to enter ---- */
