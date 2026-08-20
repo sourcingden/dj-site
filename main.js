@@ -241,12 +241,27 @@ const AudioEngine = (() => {
    Three layers are drawn: two faint, phase-shifted "echoes" behind a
    glow pass and the crisp main line — no per-frame shadowBlur (expensive);
    the glow is a plain wide, low-alpha stroke underneath the main line.
+
+   Phase 3 adds pointer/touch distortion: every point within radius R of the
+   cursor is pulled toward its y-coordinate (falloff by distance), and a
+   critically-underdamped spring per point carries that pull as a persistent
+   offset added on top of the audio+idle displacement — so it eases in when
+   the pointer approaches and springs back with a touch of overshoot when it
+   leaves, instead of teleporting.
    -------------------------------------------------------------------------- */
 const Wave = (() => {
   let canvas, ctx;
   let width = 0;
   let height = 0;
   let pointCount = 120;
+
+  // Persistent per-point spring state for pointer distortion (offset from
+  // the point's natural/audio-driven y, and its velocity). Sized to
+  // pointCount+1 whenever the point count changes (resize).
+  let springY = [];
+  let springVY = [];
+
+  const pointer = { x: 0, y: 0, active: false };
 
   const color = { fg: '#f2ede4', accent: '#c97a3d' };
 
@@ -323,7 +338,7 @@ const Wave = (() => {
     for (let i = 0; i <= pointCount; i++) {
       const u = i / pointCount;
       const x = u * width;
-      const y = midY + displacement(u, t, bands, phaseShift, ampScale);
+      const y = midY + displacement(u, t, bands, phaseShift, ampScale) + springY[i];
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -333,6 +348,53 @@ const Wave = (() => {
     // ~1 point per 14 CSS px, clamped to a sane range. Mobile gets a
     // further, device-aware reduction pass in Phase 5.
     return Math.max(60, Math.min(220, Math.round(w / 14)));
+  }
+
+  function pointerRadius() {
+    // Scales with viewport so the distortion field feels proportional on
+    // both a phone and an ultrawide monitor.
+    return Math.min(320, Math.max(140, width * 0.18));
+  }
+
+  // ---- pointer-distortion spring tuning ----
+  const PULL_STRENGTH = 0.55; // fraction of pointer distance pulled at zero range
+  const SPRING_HZ = 5; // natural frequency: snappy but not twitchy
+  const SPRING_ZETA = 0.55; // underdamped: a touch of elastic overshoot on release
+  const SPRING_K = (2 * Math.PI * SPRING_HZ) ** 2;
+  const SPRING_C = 2 * SPRING_ZETA * 2 * Math.PI * SPRING_HZ;
+  const MAX_DT = 0.05; // clamp so a stalled tab / big frame gap can't blow up the integrator
+
+  function ensureSpringArrays() {
+    if (springY.length !== pointCount + 1) {
+      springY = new Array(pointCount + 1).fill(0);
+      springVY = new Array(pointCount + 1).fill(0);
+    }
+  }
+
+  function stepPhysics(t, bands, dtSec) {
+    const dt = Math.min(dtSec, MAX_DT);
+    const R = pointerRadius();
+
+    for (let i = 0; i <= pointCount; i++) {
+      const u = i / pointCount;
+      const x = u * width;
+
+      let target = 0;
+      if (pointer.active) {
+        const naturalY = height / 2 + displacement(u, t, bands, 0, 1);
+        const dx = pointer.x - x;
+        const dy = pointer.y - naturalY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < R) {
+          const falloff = 1 - dist / R;
+          target = dy * falloff * falloff * PULL_STRENGTH;
+        }
+      }
+
+      const accel = SPRING_K * (target - springY[i]) - SPRING_C * springVY[i];
+      springVY[i] += accel * dt;
+      springY[i] += springVY[i] * dt;
+    }
   }
 
   function resize() {
@@ -345,6 +407,7 @@ const Wave = (() => {
     canvas.style.height = height + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel coordinates
     pointCount = computePointCount(width);
+    ensureSpringArrays();
   }
 
   let resizeTimer = null;
@@ -353,15 +416,55 @@ const Wave = (() => {
     resizeTimer = setTimeout(resize, 120); // debounced
   }
 
+  function setPointer(x, y) {
+    pointer.x = x;
+    pointer.y = y;
+    pointer.active = true;
+  }
+
+  function clearPointer() {
+    pointer.active = false;
+  }
+
+  function bindPointerEvents() {
+    // window-level, not canvas-level: mouse/touch events still bubble up to
+    // window even when the topmost element under the cursor is a button
+    // (nav, mute, tap-to-enter), so the distortion field stays live over UI.
+    window.addEventListener('mousemove', (e) => setPointer(e.clientX, e.clientY));
+    window.addEventListener('mouseleave', clearPointer);
+
+    window.addEventListener(
+      'touchstart',
+      (e) => {
+        const touch = e.touches[0];
+        if (touch) setPointer(touch.clientX, touch.clientY);
+      },
+      { passive: true }
+    );
+    window.addEventListener(
+      'touchmove',
+      (e) => {
+        const touch = e.touches[0];
+        if (touch) setPointer(touch.clientX, touch.clientY);
+      },
+      { passive: true }
+    );
+    window.addEventListener('touchend', clearPointer, { passive: true });
+    window.addEventListener('touchcancel', clearPointer, { passive: true });
+  }
+
   function init() {
     canvas = document.getElementById('wave-canvas');
     ctx = canvas.getContext('2d');
     readColorTokens();
     resize();
     window.addEventListener('resize', onResize);
+    bindPointerEvents();
   }
 
-  function draw(t, bands) {
+  function draw(t, dt, bands) {
+    stepPhysics(t, bands, dt);
+
     ctx.clearRect(0, 0, width, height);
 
     // Echoes: faintest + furthest phase-shift drawn first (furthest back).
@@ -441,7 +544,7 @@ const Wave = (() => {
     lastTime = ts;
 
     const bands = AudioEngine.update();
-    Wave.draw(ts, bands);
+    Wave.draw(ts, dt / 1000, bands);
 
     if (window.DJ_DEBUG) {
       debugAccum += dt;
