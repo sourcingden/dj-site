@@ -230,6 +230,16 @@ body.has-custom-cursor * {
   font-weight: 900;
   letter-spacing: -0.02em;
   text-transform: lowercase;
+  /* Never let "diskevich" break mid-word onto a second line. The clamp()
+     in --fs-display is tuned against Unbounded's metrics; if that font
+     fails to load (slow connection, a content blocker) and the browser
+     falls back to system-ui, the same font-size can render measurably
+     wider and overflow. JS (fitArtistName in main.js) measures the actual
+     rendered width against the available space and shrinks the font-size
+     to fit, on load/resize/font-swap — this nowrap is the safety net for
+     the brief window before that runs: overflow reads better than a
+     word broken across two lines. */
+  white-space: nowrap;
   /* The wave sits behind at z-index 1; this makes the letterforms invert
      wherever the line crosses them, so the wave visibly passes *through*
      the name instead of just running behind a flat opaque shape. Plain

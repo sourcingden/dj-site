@@ -22,6 +22,48 @@ updateMobileMode();
 window.addEventListener('resize', updateMobileMode);
 
 /* --------------------------------------------------------------------------
+   Artist-name fit
+   -----------------------------------------------------------------------
+   --fs-display's clamp() is tuned against the Unbounded display font's
+   metrics. If that font hasn't loaded yet (or fails entirely — slow
+   connection, a content blocker) the browser renders the same font-size in
+   a fallback face instead, which can measure meaningfully wider for the
+   same 9 characters and overflow — with nowrap set in CSS, an overflowing
+   *inline* heading like this doesn't wrap, but with block/flex ancestors
+   it can still be forced onto a second line, breaking "diskevich" mid-word.
+   This measures the actual rendered width against the space really
+   available and shrinks the font-size to fit, whichever font is in play.
+   -------------------------------------------------------------------------- */
+function fitArtistName() {
+  const el = document.querySelector('.artist-name');
+  const scene = document.querySelector('.scene');
+  if (!el || !scene) return;
+  el.style.fontSize = ''; // back to the CSS clamp() baseline before measuring
+  const sceneStyle = getComputedStyle(scene);
+  const available = document.documentElement.clientWidth - parseFloat(sceneStyle.paddingLeft) - parseFloat(sceneStyle.paddingRight);
+  const natural = el.scrollWidth;
+  if (natural > 0 && natural > available) {
+    const base = parseFloat(getComputedStyle(el).fontSize);
+    el.style.fontSize = base * (available / natural) * 0.97 + 'px'; // small safety margin
+  }
+}
+
+(() => {
+  let fitTimer = null;
+  const scheduleFit = () => {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(fitArtistName, 120);
+  };
+  fitArtistName();
+  window.addEventListener('resize', scheduleFit);
+  if (document.fonts && document.fonts.ready) {
+    // Refit once Unbounded actually finishes loading/swapping in — the
+    // pre-swap fallback-font measurement above may no longer apply.
+    document.fonts.ready.then(fitArtistName).catch(() => {});
+  }
+})();
+
+/* --------------------------------------------------------------------------
    Reduced motion (Phase 6)
    -----------------------------------------------------------------------
    Read live via a MediaQueryList so toggling the OS setting mid-session
