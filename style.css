@@ -1,0 +1,354 @@
+/* ==========================================================================
+   diskevich — design system
+   Concept: "Живая волна" (Living Wave)
+
+   Font pairing rationale:
+   - Display: "Unbounded" (Google Fonts, single external request) — a huge,
+     geometric, slightly eccentric grotesk. It reads as idiosyncratic rather
+     than corporate at massive sizes, which matches the brief's "idiosyncratic
+     rhythmic journeys" and gives the artist name real presence against a
+     near-empty black canvas.
+   - Text: the system monospace stack — no extra request, and the fixed-width
+     rhythm reads like a tracklist / cassette label / catalog number. That
+     ties directly to "obscure, rare" crate-digging culture: dates and bio
+     copy feel like liner notes, not marketing copy.
+   ========================================================================== */
+
+:root {
+  /* ---- Palette ----
+     Near-black void = "obscure". A warm copper/amber accent = vinyl warmth,
+     rare-groove digging culture, a single glowing ember in the dark rather
+     than a cold neon rave color. */
+  --color-bg: #0a0a0a;
+  --color-bg-elevated: #111110;
+  --color-fg: #f2ede4;
+  --color-fg-muted: #8a8378;
+  --color-accent: #c97a3d;
+  --color-accent-soft: rgba(201, 122, 61, 0.35);
+  --color-accent-dim: rgba(201, 122, 61, 0.12);
+  --color-line: rgba(242, 237, 228, 0.12);
+  --color-overlay-bg: rgba(8, 7, 6, 0.96);
+
+  /* ---- Type ---- */
+  --font-display: 'Unbounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-text: ui-monospace, 'SF Mono', 'Space Mono', 'Cascadia Code', 'Courier New', monospace;
+
+  --fs-display: clamp(3.2rem, 15vw, 12rem);
+  --fs-tagline: clamp(0.7rem, 1.6vw, 1rem);
+  --fs-nav: clamp(0.7rem, 1.1vw, 0.85rem);
+  --fs-h2: clamp(1.75rem, 5vw, 3.25rem);
+  --fs-body: clamp(0.95rem, 1.3vw, 1.15rem);
+  --fs-small: clamp(0.7rem, 1vw, 0.85rem);
+
+  /* ---- Spacing ---- */
+  --space-2xs: 0.375rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1.25rem;
+  --space-md: clamp(1.5rem, 4vw, 2.5rem);
+  --space-lg: clamp(2.5rem, 6vw, 5rem);
+
+  /* ---- Motion ----
+     One signature ease (expo-out) used everywhere for consistency; a spring
+     variant reserved for the wave's physical interactions (Phase 3). */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-instant: 120ms;
+  --dur-fast: 220ms;
+  --dur-medium: 400ms;
+  --dur-wake: 1500ms;
+
+  /* ---- Layout ---- */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --tap-min: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-medium: 0ms;
+    --dur-wake: 0ms;
+  }
+}
+
+/* ---- Reset ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+h1,
+h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ---- Canvas + grain layers ---- */
+#wave-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  /* film-grain texture: added in Phase 7, kept empty here so the layer
+     costs nothing until then */
+}
+
+/* ---- Scene ---- */
+.scene {
+  position: relative;
+  z-index: 2;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
+    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
+}
+
+.mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.artist-name {
+  font-size: var(--fs-display);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+
+.tagline {
+  font-size: var(--fs-tagline);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+}
+
+/* ---- Nav ---- */
+.site-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--space-md) + var(--safe-b));
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  gap: var(--space-lg);
+}
+
+.nav-item {
+  font-family: var(--font-text);
+  font-size: var(--fs-nav);
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2xs);
+  transition: color var(--dur-fast) var(--ease-out-expo);
+}
+
+.nav-item:hover,
+.nav-item:focus-visible {
+  color: var(--color-accent);
+}
+
+.nav-item:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
+/* ---- Mute toggle ---- */
+.mute-toggle {
+  position: fixed;
+  top: calc(var(--space-md) + var(--safe-t));
+  right: calc(var(--space-md) + var(--safe-r));
+  z-index: 3;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-line);
+  border-radius: 50%;
+  transition: border-color var(--dur-fast) var(--ease-out-expo);
+}
+
+.mute-toggle:hover,
+.mute-toggle:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.mute-toggle:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.mute-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+body[data-muted='true'] .mute-icon {
+  background: var(--color-fg-muted);
+}
+
+/* ---- Tap to enter ---- */
+.tap-to-enter {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  background: var(--color-bg);
+  transition: opacity var(--dur-wake) var(--ease-out-expo), visibility var(--dur-wake) var(--ease-out-expo);
+}
+
+.tap-ring {
+  position: absolute;
+  width: 88px;
+  height: 88px;
+  border: 1px solid var(--color-accent-soft);
+  border-radius: 50%;
+  animation: pulse-ring 2.4s var(--ease-out-expo) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tap-ring {
+    animation: none;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.tap-label {
+  position: relative;
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.2em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+}
+
+body[data-state='awake'] .tap-to-enter {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ---- Overlays ---- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--color-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-medium) var(--ease-out-expo), visibility var(--dur-medium) var(--ease-out-expo);
+}
+
+.overlay[data-open='true'] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.overlay-inner {
+  max-width: 42rem;
+  width: 100%;
+  padding: 0 calc(var(--space-md) + var(--safe-r)) 0 calc(var(--space-md) + var(--safe-l));
+  text-align: center;
+}
+
+.overlay-inner h2 {
+  font-size: var(--fs-h2);
+  text-transform: lowercase;
+  margin-bottom: var(--space-md);
+}
+
+.overlay-close {
+  position: fixed;
+  top: calc(var(--space-md) + var(--safe-t));
+  right: calc(var(--space-md) + var(--safe-r));
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+}
+
+.overlay-close:hover,
+.overlay-close:focus-visible {
+  color: var(--color-accent);
+}
+
+.overlay-close:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}

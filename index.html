@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>diskevich</title>
+  <meta name="description" content="diskevich — obscure, rare, groovy experience. crafting idiosyncratic rhythmic journeys that challenge the mind while compelling the body to move." />
+
+  <!-- Single external request: display typeface, swap so first paint never blocks on it -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;700;900&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-state="sleeping">
+
+  <canvas id="wave-canvas" aria-hidden="true"></canvas>
+  <div class="grain" aria-hidden="true"></div>
+
+  <main class="scene">
+    <header class="mark">
+      <h1 class="artist-name">diskevich</h1>
+      <p class="tagline">obscure &middot; rare &middot; groovy experience</p>
+    </header>
+
+    <nav class="site-nav" aria-label="Site sections">
+      <button type="button" class="nav-item" data-overlay-target="bio">bio</button>
+      <button type="button" class="nav-item" data-overlay-target="dates">dates</button>
+      <button type="button" class="nav-item" data-overlay-target="booking">booking</button>
+    </nav>
+
+    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio">
+      <span class="mute-icon" aria-hidden="true"></span>
+    </button>
+
+    <button type="button" id="tap-to-enter" class="tap-to-enter">
+      <span class="tap-ring" aria-hidden="true"></span>
+      <span class="tap-label">tap to enter</span>
+    </button>
+  </main>
+
+  <!-- Overlays: skeleton only for now, content wired in Phase 4 -->
+  <div class="overlay" id="overlay-bio" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="bio-title" hidden>
+    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
+    <div class="overlay-inner">
+      <h2 id="bio-title">bio</h2>
+      <!-- TODO Phase 4: bio copy -->
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay-dates" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="dates-title" hidden>
+    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
+    <div class="overlay-inner">
+      <h2 id="dates-title">dates</h2>
+      <!-- TODO Phase 4: dates list -->
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay-booking" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="booking-title" hidden>
+    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
+    <div class="overlay-inner">
+      <h2 id="booking-title">booking</h2>
+      <!-- TODO Phase 4: contact links -->
+    </div>
+  </div>
+
+  <script src="main.js" defer></script>
+</body>
+</html>
