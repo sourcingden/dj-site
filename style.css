@@ -28,6 +28,13 @@
   --color-accent-dim: rgba(201, 122, 61, 0.12);
   --color-line: rgba(242, 237, 228, 0.12);
   --color-overlay-bg: rgba(8, 7, 6, 0.96);
+  /* Text-selection highlight: deliberately NOT the copper brand accent —
+     the point is a jolt of something unexpected exactly where browsers
+     default to a boring system blue. Still warm-leaning (magenta, not a
+     cold cyan/lime) so it doesn't fight the "warm, not neon" palette
+     philosophy above, just turns it up loud for one specific moment. */
+  --color-selection-bg: #ff2d78;
+  --color-selection-fg: #0a0a0a;
 
   /* ---- Type ---- */
   --font-display: 'Unbounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -109,6 +116,12 @@ html,
 body {
   height: 100%;
   overflow-x: hidden;
+}
+
+::selection,
+::-moz-selection {
+  background: var(--color-selection-bg);
+  color: var(--color-selection-fg);
 }
 
 body {
