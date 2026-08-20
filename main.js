@@ -228,6 +228,174 @@ const AudioEngine = (() => {
   };
 })();
 
+/* --------------------------------------------------------------------------
+   Wave
+   -----------------------------------------------------------------------
+   Draws the wave on #wave-canvas. Each point's vertical displacement is the
+   sum of:
+     (a) three sine ripples driven by the live bass/mid/high band values
+         (bass = slow, tall swells; mid = medium ripples; high = fast, fine
+         jitter), so the wave visibly reacts to the music, and
+     (b) a slow scrolling value-noise field, so the wave keeps breathing
+         even in total silence (idle / before playback starts).
+   Three layers are drawn: two faint, phase-shifted "echoes" behind a
+   glow pass and the crisp main line — no per-frame shadowBlur (expensive);
+   the glow is a plain wide, low-alpha stroke underneath the main line.
+   -------------------------------------------------------------------------- */
+const Wave = (() => {
+  let canvas, ctx;
+  let width = 0;
+  let height = 0;
+  let pointCount = 120;
+
+  const color = { fg: '#f2ede4', accent: '#c97a3d' };
+
+  function readColorTokens() {
+    const styles = getComputedStyle(document.documentElement);
+    color.fg = styles.getPropertyValue('--color-fg').trim() || color.fg;
+    color.accent = styles.getPropertyValue('--color-accent').trim() || color.accent;
+  }
+
+  function hexToRgba(hex, alpha) {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    const n = parseInt(h, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // ---- cheap 1D value noise (lattice hash + smoothstep interpolation),
+  // summed at two octaves for a slightly more organic "breathing" curve ----
+  function hash(n) {
+    const s = Math.sin(n * 12.9898) * 43758.5453123;
+    return s - Math.floor(s);
+  }
+  function noise1D(x) {
+    const i0 = Math.floor(x);
+    const t = x - i0;
+    const s = t * t * (3 - 2 * t);
+    return hash(i0) * (1 - s) + hash(i0 + 1) * s;
+  }
+  function idleNoise(x) {
+    return noise1D(x) * 0.65 + noise1D(x * 2.13 + 41.7) * 0.35;
+  }
+
+  // ---- tuning constants, in CSS-pixel space ----
+  const IDLE_AMP = 9;
+  const IDLE_SCALE = 1.4;
+  const IDLE_SPEED = 0.00022;
+
+  const BASS_AMP = 56;
+  const BASS_FREQ = 1.3; // cycles across the full width
+  const BASS_SPEED = 0.00055;
+
+  const MID_AMP = 22;
+  const MID_FREQ = 4.4;
+  const MID_SPEED = 0.0011;
+  const MID_PHASE = Math.PI / 3;
+
+  const HIGH_AMP = 10;
+  const HIGH_FREQ = 15;
+  const HIGH_SPEED = 0.0021;
+
+  const EDGE_FADE = 0.06; // fraction of width tapered to 0 at each edge
+
+  function edgeFade(u) {
+    if (u < EDGE_FADE) return u / EDGE_FADE;
+    if (u > 1 - EDGE_FADE) return (1 - u) / EDGE_FADE;
+    return 1;
+  }
+
+  function displacement(u, t, bands, phaseShift, ampScale) {
+    const tt = t + phaseShift;
+    const bass = BASS_AMP * bands.bass * Math.sin(u * Math.PI * 2 * BASS_FREQ + tt * BASS_SPEED);
+    const mid = MID_AMP * bands.mid * Math.sin(u * Math.PI * 2 * MID_FREQ + tt * MID_SPEED + MID_PHASE);
+    const high = HIGH_AMP * bands.high * Math.sin(u * Math.PI * 2 * HIGH_FREQ + tt * HIGH_SPEED);
+    const idle = IDLE_AMP * (idleNoise(u * IDLE_SCALE + tt * IDLE_SPEED) * 2 - 1);
+    return (bass + mid + high + idle) * ampScale * edgeFade(u);
+  }
+
+  function tracePath(t, bands, phaseShift, ampScale, yOffset) {
+    const midY = height / 2 + yOffset;
+    ctx.beginPath();
+    for (let i = 0; i <= pointCount; i++) {
+      const u = i / pointCount;
+      const x = u * width;
+      const y = midY + displacement(u, t, bands, phaseShift, ampScale);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+  }
+
+  function computePointCount(w) {
+    // ~1 point per 14 CSS px, clamped to a sane range. Mobile gets a
+    // further, device-aware reduction pass in Phase 5.
+    return Math.max(60, Math.min(220, Math.round(w / 14)));
+  }
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel coordinates
+    pointCount = computePointCount(width);
+  }
+
+  let resizeTimer = null;
+  function onResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 120); // debounced
+  }
+
+  function init() {
+    canvas = document.getElementById('wave-canvas');
+    ctx = canvas.getContext('2d');
+    readColorTokens();
+    resize();
+    window.addEventListener('resize', onResize);
+  }
+
+  function draw(t, bands) {
+    ctx.clearRect(0, 0, width, height);
+
+    // Echoes: faintest + furthest phase-shift drawn first (furthest back).
+    tracePath(t, bands, -420, 0.72, 10);
+    ctx.strokeStyle = hexToRgba(color.fg, 0.08);
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    tracePath(t, bands, -220, 0.85, 5);
+    ctx.strokeStyle = hexToRgba(color.fg, 0.16);
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Glow: one wide, low-alpha stroke under the main line — the cheap
+    // alternative to setting shadowBlur every frame.
+    tracePath(t, bands, 0, 1, 0);
+    ctx.strokeStyle = hexToRgba(color.accent, 0.18);
+    ctx.lineWidth = 8;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Main line.
+    tracePath(t, bands, 0, 1, 0);
+    ctx.strokeStyle = color.fg;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  return { init, draw };
+})();
+
 /* -------------------------------------------------------------------------- */
 
 (() => {
@@ -238,6 +406,7 @@ const AudioEngine = (() => {
   // Start loading/generating audio immediately so the wake moment has no
   // decode lag; the context stays 'suspended' (no sound) until the tap.
   AudioEngine.preload();
+  Wave.init();
 
   tapToEnter.addEventListener('click', async () => {
     if (body.dataset.state === 'awake') return;
@@ -258,12 +427,21 @@ const AudioEngine = (() => {
 
   let lastTime = 0;
   let debugAccum = 0;
+
+  // TEMP (Phase 2 perf validation only — removed in Phase 6): on-screen fps
+  // meter, lazily created the first time window.DJ_DEBUG is set so it costs
+  // nothing on a normal page load.
+  let fpsEl = null;
+  let fpsFrames = 0;
+  let fpsAccum = 0;
+
   function frameLoop(ts) {
     requestAnimationFrame(frameLoop);
     const dt = lastTime ? ts - lastTime : 0;
     lastTime = ts;
 
     const bands = AudioEngine.update();
+    Wave.draw(ts, bands);
 
     if (window.DJ_DEBUG) {
       debugAccum += dt;
@@ -275,6 +453,24 @@ const AudioEngine = (() => {
           high: bands.high.toFixed(2),
         });
       }
+
+      if (!fpsEl) {
+        fpsEl = document.createElement('div');
+        fpsEl.style.cssText =
+          'position:fixed;top:8px;left:8px;z-index:999;font:11px monospace;' +
+          'color:#0f0;background:rgba(0,0,0,.6);padding:2px 6px;pointer-events:none;';
+        document.body.appendChild(fpsEl);
+      }
+      fpsFrames++;
+      fpsAccum += dt;
+      if (fpsAccum > 500) {
+        fpsEl.textContent = Math.round((fpsFrames * 1000) / fpsAccum) + ' fps';
+        fpsFrames = 0;
+        fpsAccum = 0;
+      }
+    } else if (fpsEl) {
+      fpsEl.remove();
+      fpsEl = null;
     }
   }
   requestAnimationFrame(frameLoop);
