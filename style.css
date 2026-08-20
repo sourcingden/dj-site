@@ -395,25 +395,30 @@ body.has-custom-cursor * {
   outline-offset: 3px;
 }
 
+/* Two SVGs per button (on/off, sun/moon), CSS toggles which is shown —
+   distinct pictograms rather than a shared dot/ring language, so the two
+   controls read as different actions (audio vs. appearance) at a glance. */
 .mute-icon {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-accent);
+  width: 18px;
+  height: 18px;
+  color: var(--color-accent);
+  transition: color var(--dur-fast) var(--ease-out-expo);
 }
 
-body[data-muted='true'] .mute-icon {
-  background: var(--color-fg-muted);
+.mute-icon--off {
+  display: none;
+}
+
+body[data-muted='true'] .mute-icon--on {
+  display: none;
+}
+
+body[data-muted='true'] .mute-icon--off {
+  display: block;
+  color: var(--color-fg-muted);
 }
 
 /* ---- Theme toggle ----
-   Mirrors mute-toggle exactly (same size, same circle-with-a-dot
-   language) on the opposite corner, so the two feel like siblings
-   rather than two different UI vocabularies. State reads as filled dot
-   ("night") vs. hollow ring ("day") rather than a sun/moon icon —
-   consistent with the dot motif already used by the mute icon, the
-   cursor, and the tap-to-enter ring.
-
    z-index 11, above .tap-to-enter's 10 (unlike mute-toggle, left at 3):
    visual comfort should be adjustable immediately on landing, before
    committing to the audio-gated tap — mute has nothing to mute yet at
@@ -445,17 +450,21 @@ body[data-muted='true'] .mute-icon {
 }
 
 .theme-icon {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  box-shadow: inset 0 0 0 1.5px transparent;
-  transition: background-color var(--dur-fast) var(--ease-out-expo), box-shadow var(--dur-fast) var(--ease-out-expo);
+  width: 18px;
+  height: 18px;
+  color: var(--color-accent);
 }
 
-:root[data-theme='light'] .theme-icon {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+.theme-icon--sun {
+  display: none;
+}
+
+:root[data-theme='light'] .theme-icon--sun {
+  display: block;
+}
+
+:root[data-theme='light'] .theme-icon--moon {
+  display: none;
 }
 
 /* ---- Tap to enter ---- */
