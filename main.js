@@ -7,6 +7,21 @@
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
+   Shared mobile detection
+   -----------------------------------------------------------------------
+   Width + touch (coarse pointer), per the brief. Read by Wave (fewer wave
+   points) and by the audio analysis throttle below (Phase 5: reduce point
+   count and analysis frequency on mobile). Recomputed on resize so
+   rotating a phone or resizing a window stays correct.
+   -------------------------------------------------------------------------- */
+let mobileMode = false;
+function updateMobileMode() {
+  mobileMode = window.innerWidth <= 768 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+}
+updateMobileMode();
+window.addEventListener('resize', updateMobileMode);
+
+/* --------------------------------------------------------------------------
    Synthetic placeholder loop
    -----------------------------------------------------------------------
    TODO: replace with a real track.mp3 in the project root. Until then this
@@ -130,7 +145,10 @@ const AudioEngine = (() => {
     }
 
     analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048; // 1024 frequency bins
+    // Fewer bins on mobile (Phase 5): halves the per-call cost of
+    // getByteFrequencyData, and bass/mid/high bucket averaging doesn't need
+    // the extra resolution 2048 buys on a phone-class CPU anyway.
+    analyser.fftSize = mobileMode ? 1024 : 2048;
     analyser.smoothingTimeConstant = 0; // we own smoothing ourselves, see SMOOTHING
     freqData = new Uint8Array(analyser.frequencyBinCount);
 
@@ -345,8 +363,12 @@ const Wave = (() => {
   }
 
   function computePointCount(w) {
-    // ~1 point per 14 CSS px, clamped to a sane range. Mobile gets a
-    // further, device-aware reduction pass in Phase 5.
+    // ~1 point per 14 CSS px on desktop; sparser and capped lower on
+    // mobile (touch or <=768px) — a phone GPU/CPU redraws far fewer
+    // segments for a line that's rendered much smaller anyway.
+    if (mobileMode) {
+      return Math.max(40, Math.min(90, Math.round(w / 20)));
+    }
     return Math.max(60, Math.min(220, Math.round(w / 14)));
   }
 
@@ -610,9 +632,15 @@ const Overlays = (() => {
   // live bass/mid/high values (throttled to 2/sec). Also reachable directly
   // as window.diskevichAudio.bands at any time.
   window.diskevichAudio = AudioEngine;
+  window.diskevichDebug = {
+    get mobileMode() {
+      return mobileMode;
+    },
+  };
 
   let lastTime = 0;
   let debugAccum = 0;
+  let mobileFrameCounter = 0;
 
   // TEMP (Phase 2 perf validation only — removed in Phase 6): on-screen fps
   // meter, lazily created the first time window.DJ_DEBUG is set so it costs
@@ -626,7 +654,18 @@ const Overlays = (() => {
     const dt = lastTime ? ts - lastTime : 0;
     lastTime = ts;
 
-    const bands = AudioEngine.update();
+    // Phase 5: halve analysis frequency on mobile (still redraw the wave
+    // every frame — only the relatively expensive getByteFrequencyData +
+    // band-averaging read is skipped every other frame). The EMA smoothing
+    // already in AudioEngine.update() makes the reused value indistinguishable
+    // from a fresh one at this rate.
+    let bands;
+    if (mobileMode) {
+      mobileFrameCounter++;
+      bands = mobileFrameCounter % 2 === 0 ? AudioEngine.update() : AudioEngine.bands;
+    } else {
+      bands = AudioEngine.update();
+    }
     Wave.draw(ts, dt / 1000, bands);
 
     if (window.DJ_DEBUG) {
