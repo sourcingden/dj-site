@@ -22,6 +22,22 @@ updateMobileMode();
 window.addEventListener('resize', updateMobileMode);
 
 /* --------------------------------------------------------------------------
+   Reduced motion (Phase 6)
+   -----------------------------------------------------------------------
+   Read live via a MediaQueryList so toggling the OS setting mid-session
+   takes effect immediately, no reload needed. Wave freezes the time input
+   to its idle/audio displacement (so it stops breathing/animating on its
+   own) while still letting pointer-driven distortion — direct user
+   interaction, not ambient motion — spring normally. Audio never
+   autoplays for these users: tap-to-enter still dismisses the entry
+   screen, but AudioEngine.start() is skipped.
+   -------------------------------------------------------------------------- */
+const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+function prefersReducedMotion() {
+  return !!(reducedMotionQuery && reducedMotionQuery.matches);
+}
+
+/* --------------------------------------------------------------------------
    Synthetic placeholder loop
    -----------------------------------------------------------------------
    TODO: replace with a real track.mp3 in the project root. Until then this
@@ -29,6 +45,15 @@ window.addEventListener('resize', updateMobileMode);
    = bass, sparse minor-interval arpeggio = mid, filtered noise hats = high)
    so the analyser always has real bass/mid/high content to react to.
    -------------------------------------------------------------------------- */
+// Yields back to the main thread periodically (Phase 6: this is what keeps
+// generateSyntheticLoop's ~400 Web Audio node-creation calls from forming
+// one long synchronous task that would spike Total Blocking Time on page
+// load — each chunk between yields stays well under the 50ms "long task"
+// threshold instead of one ~300ms+ block).
+function yieldToMain() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function generateSyntheticLoop(sampleRate) {
   const duration = 30;
   const bpm = 122;
@@ -42,6 +67,7 @@ async function generateSyntheticLoop(sampleRate) {
   // Bass: four-on-the-floor kick, pitch-enveloped sine.
   const totalBeats = Math.floor(duration / beatDur);
   for (let i = 0; i < totalBeats; i++) {
+    if (i % 30 === 0) await yieldToMain();
     const t = i * beatDur;
     const osc = offlineCtx.createOscillator();
     const gain = offlineCtx.createGain();
@@ -59,6 +85,7 @@ async function generateSyntheticLoop(sampleRate) {
   // High: filtered noise hats on the offbeat.
   const hatLen = Math.ceil(sampleRate * 0.05);
   for (let i = 0; i < totalBeats * 2; i++) {
+    if (i % 30 === 0) await yieldToMain();
     const t = i * (beatDur / 2) + beatDur / 4;
     const noiseBuf = offlineCtx.createBuffer(1, hatLen, sampleRate);
     const data = noiseBuf.getChannelData(0);
@@ -81,6 +108,7 @@ async function generateSyntheticLoop(sampleRate) {
   const stepDur = beatDur / 4;
   const totalSteps = Math.floor(duration / stepDur);
   for (let i = 0; i < totalSteps; i++) {
+    if (i % 30 === 0) await yieldToMain();
     if (Math.random() < 0.35) continue;
     const t = i * stepDur;
     const freq = scaleHz[i % scaleHz.length];
@@ -124,6 +152,7 @@ const AudioEngine = (() => {
   let started = false;
   let muted = false;
   let usingSyntheticLoop = false;
+  let audioUnavailable = false;
   let freqData = null;
 
   const bands = { bass: 0, mid: 0, high: 0 };
@@ -168,9 +197,19 @@ const AudioEngine = (() => {
     // creating the analyser — actually finishes).
     if (!preloadPromise) {
       preloadPromise = (async () => {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        ctx = new Ctx(); // begins 'suspended' until a user-gesture resume()
-        await loadBuffer();
+        // Fallback (Phase 6): if Web Audio isn't available at all, or
+        // anything in setup throws, fail soft — the wave already runs on
+        // idle noise alone whenever `analyser` is null (see update()
+        // below), so the site stays exactly as designed, just silent.
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) throw new Error('Web Audio API not supported in this browser');
+          ctx = new Ctx(); // begins 'suspended' until a user-gesture resume()
+          await loadBuffer();
+        } catch (err) {
+          audioUnavailable = true;
+          console.warn('[diskevich] Web Audio unavailable — running on idle motion only, no sound.', err);
+        }
       })();
     }
     return preloadPromise;
@@ -188,6 +227,7 @@ const AudioEngine = (() => {
 
   async function start() {
     await preload(); // no-op await if already resolved; always safe
+    if (audioUnavailable) return; // no-op: nothing to resume/play
     if (ctx.state === 'suspended') await ctx.resume();
     play();
   }
@@ -350,13 +390,13 @@ const Wave = (() => {
     return (bass + mid + high + idle) * ampScale * edgeFade(u);
   }
 
-  function tracePath(t, bands, phaseShift, ampScale, yOffset) {
+  function tracePath(t, bands, phaseShift, ampScale, yOffset, globalScale) {
     const midY = height / 2 + yOffset;
     ctx.beginPath();
     for (let i = 0; i <= pointCount; i++) {
       const u = i / pointCount;
       const x = u * width;
-      const y = midY + displacement(u, t, bands, phaseShift, ampScale) + springY[i];
+      const y = midY + (displacement(u, t, bands, phaseShift, ampScale) + springY[i]) * globalScale;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -484,19 +524,36 @@ const Wave = (() => {
     bindPointerEvents();
   }
 
-  function draw(t, dt, bands) {
-    stepPhysics(t, bands, dt);
+  // Concept spec: before the first tap the site is 'sleeping' — the wave
+  // should barely move, not breathe at full amplitude. (audio bands are
+  // already 0 pre-tap since nothing has played yet; this scales the idle
+  // motion too.) Phase 7 choreographs the actual wake transition on top of
+  // this; here it's a direct switch, not yet eased.
+  const SLEEP_SCALE = 0.12;
+
+  function draw(t, dt, bands, awake) {
+    // Reduced motion (Phase 6): freeze the time input to the shape math so
+    // the idle-noise breathing and audio ripples stop animating on their
+    // own — the wave becomes a static (but still organically-shaped, not a
+    // flat line) curve. `dt` for the pointer spring is left untouched, so
+    // direct interaction — user-initiated, not ambient motion — still
+    // eases and settles normally; reduced motion targets automatic motion,
+    // not a response to something the visitor is actively doing.
+    const effectiveT = prefersReducedMotion() ? 0 : t;
+    const globalScale = awake ? 1 : SLEEP_SCALE;
+
+    stepPhysics(effectiveT, bands, dt);
 
     ctx.clearRect(0, 0, width, height);
 
     // Echoes: faintest + furthest phase-shift drawn first (furthest back).
-    tracePath(t, bands, -420, 0.72, 10);
+    tracePath(effectiveT, bands, -420, 0.72, 10, globalScale);
     ctx.strokeStyle = hexToRgba(color.fg, 0.08);
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
     ctx.stroke();
 
-    tracePath(t, bands, -220, 0.85, 5);
+    tracePath(effectiveT, bands, -220, 0.85, 5, globalScale);
     ctx.strokeStyle = hexToRgba(color.fg, 0.16);
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
@@ -504,14 +561,14 @@ const Wave = (() => {
 
     // Glow: one wide, low-alpha stroke under the main line — the cheap
     // alternative to setting shadowBlur every frame.
-    tracePath(t, bands, 0, 1, 0);
+    tracePath(effectiveT, bands, 0, 1, 0, globalScale);
     ctx.strokeStyle = hexToRgba(color.accent, 0.18);
     ctx.lineWidth = 8;
     ctx.lineJoin = 'round';
     ctx.stroke();
 
     // Main line.
-    tracePath(t, bands, 0, 1, 0);
+    tracePath(effectiveT, bands, 0, 1, 0, globalScale);
     ctx.strokeStyle = color.fg;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
@@ -610,16 +667,35 @@ const Overlays = (() => {
   const tapToEnter = document.getElementById('tap-to-enter');
   const muteToggle = document.getElementById('mute-toggle');
 
-  // Start loading/generating audio immediately so the wake moment has no
-  // decode lag; the context stays 'suspended' (no sound) until the tap.
-  AudioEngine.preload();
+  // Start loading/generating audio once the page has painted and settled
+  // (Phase 6: keeps the — possibly chunky, especially for the synthetic
+  // placeholder loop — decode/generate work off the critical initial-paint
+  // path) rather than at parse time, but still well ahead of the tap so
+  // the wake moment has no perceptible lag.
+  const kickOffAudioPreload = () => {
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(() => AudioEngine.preload(), { timeout: 2000 });
+    } else {
+      setTimeout(() => AudioEngine.preload(), 0);
+    }
+  };
+  if (document.readyState === 'complete') {
+    kickOffAudioPreload();
+  } else {
+    window.addEventListener('load', kickOffAudioPreload);
+  }
+
   Wave.init();
   Overlays.init();
 
   tapToEnter.addEventListener('click', async () => {
     if (body.dataset.state === 'awake') return;
     body.dataset.state = 'awake';
-    await AudioEngine.start();
+    // Reduced motion (Phase 6): dismiss the entry screen, but don't start
+    // audio — nothing here should autoplay for these visitors.
+    if (!prefersReducedMotion()) {
+      await AudioEngine.start();
+    }
   });
 
   muteToggle.addEventListener('click', () => {
@@ -628,9 +704,10 @@ const Overlays = (() => {
     body.dataset.muted = String(muted);
   });
 
-  // Dev/debug access: set window.DJ_DEBUG = true in the console to log
-  // live bass/mid/high values (throttled to 2/sec). Also reachable directly
-  // as window.diskevichAudio.bands at any time.
+  // Dev/debug access, zero runtime cost otherwise: window.diskevichAudio.bands
+  // for live bass/mid/high, window.diskevichDebug.mobileMode to check which
+  // branch is active. (The old DJ_DEBUG console logger and on-screen fps
+  // meter were removed in Phase 6.)
   window.diskevichAudio = AudioEngine;
   window.diskevichDebug = {
     get mobileMode() {
@@ -639,20 +716,23 @@ const Overlays = (() => {
   };
 
   let lastTime = 0;
-  let debugAccum = 0;
   let mobileFrameCounter = 0;
-
-  // TEMP (Phase 2 perf validation only — removed in Phase 6): on-screen fps
-  // meter, lazily created the first time window.DJ_DEBUG is set so it costs
-  // nothing on a normal page load.
-  let fpsEl = null;
-  let fpsFrames = 0;
-  let fpsAccum = 0;
+  let rafId = null;
+  let lastSleepDrawTs = 0;
+  // Barely-moving content doesn't need 60fps: while sleeping (pre-tap),
+  // redraw only a few times a second instead of every frame. Genuinely
+  // cheaper (near-zero CPU during however long the entry screen sits
+  // there), and it keeps the pre-interaction screen visually calmer.
+  const SLEEP_REDRAW_INTERVAL_MS = 200;
 
   function frameLoop(ts) {
-    requestAnimationFrame(frameLoop);
+    rafId = requestAnimationFrame(frameLoop);
     const dt = lastTime ? ts - lastTime : 0;
     lastTime = ts;
+
+    const awake = body.dataset.state === 'awake';
+    if (!awake && ts - lastSleepDrawTs < SLEEP_REDRAW_INTERVAL_MS) return;
+    lastSleepDrawTs = ts;
 
     // Phase 5: halve analysis frequency on mobile (still redraw the wave
     // every frame — only the relatively expensive getByteFrequencyData +
@@ -666,37 +746,27 @@ const Overlays = (() => {
     } else {
       bands = AudioEngine.update();
     }
-    Wave.draw(ts, dt / 1000, bands);
-
-    if (window.DJ_DEBUG) {
-      debugAccum += dt;
-      if (debugAccum > 500) {
-        debugAccum = 0;
-        console.log('[diskevich audio]', {
-          bass: bands.bass.toFixed(2),
-          mid: bands.mid.toFixed(2),
-          high: bands.high.toFixed(2),
-        });
-      }
-
-      if (!fpsEl) {
-        fpsEl = document.createElement('div');
-        fpsEl.style.cssText =
-          'position:fixed;top:8px;left:8px;z-index:999;font:11px monospace;' +
-          'color:#0f0;background:rgba(0,0,0,.6);padding:2px 6px;pointer-events:none;';
-        document.body.appendChild(fpsEl);
-      }
-      fpsFrames++;
-      fpsAccum += dt;
-      if (fpsAccum > 500) {
-        fpsEl.textContent = Math.round((fpsFrames * 1000) / fpsAccum) + ' fps';
-        fpsFrames = 0;
-        fpsAccum = 0;
-      }
-    } else if (fpsEl) {
-      fpsEl.remove();
-      fpsEl = null;
-    }
+    Wave.draw(ts, dt / 1000, bands, awake);
   }
-  requestAnimationFrame(frameLoop);
+
+  // Phase 6: stop the loop entirely while the tab is hidden — no canvas
+  // redraws, no analyser reads, no physics — and resume cleanly when it's
+  // shown again. lastTime is reset on resume so the first post-resume
+  // frame doesn't see a multi-second dt (Wave already clamps its own
+  // physics dt too, but there's no reason to feed it a huge gap at all).
+  function startLoop() {
+    if (rafId !== null) return;
+    lastTime = 0;
+    rafId = requestAnimationFrame(frameLoop);
+  }
+  function stopLoop() {
+    if (rafId === null) return;
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopLoop();
+    else startLoop();
+  });
+  startLoop();
 })();
