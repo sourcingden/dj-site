@@ -239,6 +239,31 @@ const AudioEngine = (() => {
     gainNode.connect(analyser).connect(ctx.destination);
   }
 
+  // iOS Safari (and some other WebKit-based mobile browsers) only honors
+  // AudioContext.resume() as an audio-unlocking action when it's called
+  // *synchronously* inside a genuine user-gesture handler — not after any
+  // await, even a fetch or a heavy computation that resolves almost
+  // instantly. start() below does real async work first (awaiting preload,
+  // which may still be mid-flight on a slow connection), so calling
+  // resume() only at the end of that chain works on desktop Chrome but can
+  // silently fail to unlock audio on iOS: the context stays 'suspended'
+  // forever, the analyser only ever reads silence, and the wave — driven
+  // solely by its ~9px idle-noise term at that point — reads as "static"
+  // even though the code all technically runs. unlock() exists purely to
+  // be the *first* synchronous statement in the tap handler, so the resume
+  // call happens as close to the raw gesture as possible; start() still
+  // does the real awaited setup afterward.
+  function unlock() {
+    if (!ctx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return; // preload()'s own try/catch will set audioUnavailable
+      ctx = new Ctx();
+    }
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {}); // fire-and-forget; start() re-checks state
+    }
+  }
+
   let preloadPromise = null;
 
   function preload() {
@@ -255,8 +280,10 @@ const AudioEngine = (() => {
         // below), so the site stays exactly as designed, just silent.
         try {
           const Ctx = window.AudioContext || window.webkitAudioContext;
-          if (!Ctx) throw new Error('Web Audio API not supported in this browser');
-          ctx = new Ctx(); // begins 'suspended' until a user-gesture resume()
+          if (!ctx) {
+            if (!Ctx) throw new Error('Web Audio API not supported in this browser');
+            ctx = new Ctx(); // begins 'suspended' until a user-gesture resume()
+          }
           await loadBuffer();
         } catch (err) {
           audioUnavailable = true;
@@ -340,6 +367,7 @@ const AudioEngine = (() => {
   }
 
   return {
+    unlock,
     preload,
     start,
     toggleMute,
@@ -1005,6 +1033,12 @@ const Overlays = (() => {
 
   tapToEnter.addEventListener('click', async () => {
     if (body.dataset.state === 'awake') return;
+    // Must be the very first thing that happens, synchronously, before any
+    // await — see AudioEngine.unlock()'s own comment for why (iOS Safari's
+    // gesture-chaining requirement for AudioContext.resume()).
+    if (!prefersReducedMotion()) {
+      AudioEngine.unlock();
+    }
     body.dataset.state = 'awake';
     wakeStartTs = performance.now();
     // Reduced motion (Phase 6): dismiss the entry screen, but don't start
