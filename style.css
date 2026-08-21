@@ -60,7 +60,10 @@
 
   /* ---- Motion ----
      One signature ease (expo-out) used everywhere for consistency; a spring
-     variant reserved for the wave's physical interactions (Phase 3). */
+     variant for physical/springy interactions — the wave's own pointer
+     distortion is JS-integrated math (Phase 3), but this token drives the
+     CSS-transition side of the same idea: magnetic-pull buttons snapping
+     back to rest with a touch of overshoot. */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-instant: 120ms;
@@ -294,6 +297,17 @@ body.has-custom-cursor * {
 
 :root[data-theme='light'] .artist-name {
   mix-blend-mode: normal;
+}
+
+/* Rave-burst long-press (main.js): suppresses the native text-selection
+   highlight / iOS callout bubble only for the duration of an active
+   press, toggled by JS. Deliberately not a permanent user-select:none on
+   .artist-name — that would kill the custom ::selection color on the
+   name entirely, which is its own separate, intentional feature. */
+.artist-name.rave-pressing {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .tagline {
@@ -623,7 +637,7 @@ body[data-muted='true'] .mute-icon--off {
   justify-content: center;
   border: 1px solid var(--color-line);
   border-radius: 50%;
-  transition: border-color var(--dur-fast) var(--ease-out-expo);
+  transition: border-color var(--dur-fast) var(--ease-out-expo), transform var(--dur-fast) var(--ease-spring);
 }
 
 .theme-toggle:hover,

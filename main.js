@@ -459,7 +459,16 @@ const Wave = (() => {
   let springY = [];
   let springVY = [];
 
-  const pointer = { x: 0, y: 0, active: false };
+  // Multi-touch: keyed by 'mouse' or a touch's identifier, so several
+  // simultaneous fingers each pull the wave independently instead of only
+  // the first one being tracked. Desktop mouse goes through the exact same
+  // map/keying as a one-item touch list — no parallel code path.
+  const pointers = new Map(); // key -> {x, y}
+  // Per-key last-seen position+time, used only to derive scratch drag
+  // velocity — separate from `pointers` because it needs to persist one
+  // extra read (the "previous" sample) that the spring/distortion side has
+  // no use for.
+  const pointerHistory = new Map(); // key -> {x, y, ts}
 
   // Pause/dissolve (mute -> "pause"): the most recently rendered frame's
   // inputs, cached so pause() — called from a click handler, not from
@@ -474,21 +483,47 @@ const Wave = (() => {
   let particles = [];
   const DISSOLVE_DURATION_S = 0.7;
 
-  const color = { fg: '#f2ede4', accent: '#c97a3d' };
+  const color = { fg: '#f2ede4', accent: '#c97a3d', selection: '#ff2d78' };
 
   function readColorTokens() {
     const styles = getComputedStyle(document.documentElement);
     color.fg = styles.getPropertyValue('--color-fg').trim() || color.fg;
     color.accent = styles.getPropertyValue('--color-accent').trim() || color.accent;
+    // Second accent tone for the rave-burst color cycle (see
+    // triggerRaveBurst) — reuses the existing bright ::selection color
+    // rather than inventing a third one.
+    color.selection = styles.getPropertyValue('--color-selection-bg').trim() || color.selection;
   }
 
-  function hexToRgba(hex, alpha) {
+  function hexToRgb(hex) {
     let h = hex.replace('#', '');
     if (h.length === 3) h = h.split('').map((c) => c + c).join('');
     const n = parseInt(h, 16);
-    const r = (n >> 16) & 255;
-    const g = (n >> 8) & 255;
-    const b = n & 255;
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+
+  function hexToRgba(hex, alpha) {
+    const { r, g, b } = hexToRgb(hex);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Linear interpolation between two hex colors — used only for the
+  // rave-burst color cycle (see triggerRaveBurst), computed fresh each call
+  // rather than cached, so it never risks leaving a stale mixed color
+  // behind in the module's normal fg/accent tokens.
+  // Returns {r,g,b} rather than a formatted string — the caller decides
+  // whether it needs a solid rgb() or an alpha-bearing rgba().
+  function mixHex(hexA, hexB, t) {
+    const a = hexToRgb(hexA);
+    const b = hexToRgb(hexB);
+    return {
+      r: Math.round(a.r + (b.r - a.r) * t),
+      g: Math.round(a.g + (b.g - a.g) * t),
+      b: Math.round(a.b + (b.b - a.b) * t),
+    };
+  }
+
+  function rgbaCss({ r, g, b }, alpha) {
     return `rgba(${r},${g},${b},${alpha})`;
   }
 
@@ -535,7 +570,11 @@ const Wave = (() => {
   }
 
   function displacement(u, t, bands, phaseShift, ampScale) {
-    const tt = t + phaseShift;
+    // scratchPhaseOffsetMs: a global, transient phase "lurch" from the
+    // scratch gesture (see updateScratch) — added here so it warps every
+    // term (bass/mid/high/idle) at once, the same way phaseShift already
+    // does for the echo layers, rather than needing its own amplitude path.
+    const tt = t + phaseShift + scratchPhaseOffsetMs;
     const bass = BASS_AMP * bands.bass * Math.sin(u * Math.PI * 2 * BASS_FREQ + tt * BASS_SPEED);
     const mid = MID_AMP * bands.mid * Math.sin(u * Math.PI * 2 * MID_FREQ + tt * MID_SPEED + MID_PHASE);
     const high = HIGH_AMP * bands.high * Math.sin(u * Math.PI * 2 * HIGH_FREQ + tt * HIGH_SPEED);
@@ -644,6 +683,23 @@ const Wave = (() => {
   const SPRING_C = 2 * SPRING_ZETA * 2 * Math.PI * SPRING_HZ;
   const MAX_DT = 0.05; // clamp so a stalled tab / big frame gap can't blow up the integrator
 
+  // ---- scratch-gesture tuning ----
+  // A fast horizontal drag reads as "scratching a record": a global phase
+  // jolt applied once to every displacement term at once (not a per-point
+  // effect like the spring pull), decaying fast so it feels percussive
+  // rather than a slow fade. Visual only — no AudioBufferSourceNode
+  // playbackRate manipulation, which risks sounding broken and wasn't
+  // asked for.
+  const SCRATCH_VELOCITY_SCALE = 0.14; // px/ms -> normalized energy
+  const SCRATCH_MAX_ENERGY = 1;
+  const SCRATCH_DECAY_HZ = 6; // fast exponential decay = percussive, not a fade
+  const SCRATCH_PHASE_KICK_MS = 900; // phase offset (ms-equivalent) at full energy
+  const SCRATCH_MIN_DRAG_PX = 3; // ignore touch/mouse jitter noise
+
+  let scratchEnergy = 0;
+  let scratchDirection = 1;
+  let scratchPhaseOffsetMs = 0; // recomputed once/frame in draw(), read by displacement()
+
   function ensureSpringArrays() {
     if (springY.length !== pointCount + 1) {
       springY = new Array(pointCount + 1).fill(0);
@@ -654,20 +710,29 @@ const Wave = (() => {
   function stepPhysics(t, bands, dtSec) {
     const dt = Math.min(dtSec, MAX_DT);
     const R = pointerRadius();
+    const active = pointers.size ? Array.from(pointers.values()) : null;
 
     for (let i = 0; i <= pointCount; i++) {
       const u = i / pointCount;
       const x = u * width;
 
       let target = 0;
-      if (pointer.active) {
+      if (active) {
         const naturalY = height / 2 + displacement(u, t, bands, 0, 1);
-        const dx = pointer.x - x;
-        const dy = pointer.y - naturalY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < R) {
-          const falloff = 1 - dist / R;
-          target = dy * falloff * falloff * PULL_STRENGTH;
+        // Multiple simultaneous touches: each line-point picks up whichever
+        // pointer pulls it *hardest* (nearest), not the sum of all of them —
+        // summing could stack unboundedly where two fingers' fields
+        // overlap; nearest-wins keeps every touch visually independent
+        // while bounding displacement to what one pointer already produces.
+        for (let p = 0; p < active.length; p++) {
+          const dx = active[p].x - x;
+          const dy = active[p].y - naturalY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < R) {
+            const falloff = 1 - dist / R;
+            const candidate = dy * falloff * falloff * PULL_STRENGTH;
+            if (Math.abs(candidate) > Math.abs(target)) target = candidate;
+          }
         }
       }
 
@@ -675,6 +740,13 @@ const Wave = (() => {
       springVY[i] += accel * dt;
       springY[i] += springVY[i] * dt;
     }
+  }
+
+  // Scratch energy decays once per frame (not per line-point — same
+  // discipline as globalScale/wakeProgress being computed once and reused).
+  function updateScratch(dt) {
+    scratchEnergy *= Math.exp(-SCRATCH_DECAY_HZ * dt); // frame-rate-independent exponential decay
+    scratchPhaseOffsetMs = scratchEnergy * scratchDirection * SCRATCH_PHASE_KICK_MS;
   }
 
   function resize() {
@@ -696,14 +768,40 @@ const Wave = (() => {
     resizeTimer = setTimeout(resize, 120); // debounced
   }
 
-  function setPointer(x, y) {
-    pointer.x = x;
-    pointer.y = y;
-    pointer.active = true;
+  // key: 'mouse' for the mouse, or a Touch's `identifier` for a finger.
+  function setPointer(key, x, y) {
+    // Scratch velocity: derived from consecutive samples of the *same*
+    // key, so a two-finger drag doesn't read velocity across two different
+    // fingers' positions. Skipped entirely under reduced motion — this is
+    // a much more dramatic, transient effect than the smooth spring pull,
+    // so it gets the stricter treatment (same category as the rave-burst
+    // animation being skipped outright, not toned down).
+    if (!prefersReducedMotion()) {
+      const now = performance.now();
+      const prev = pointerHistory.get(key);
+      if (prev) {
+        const dt = Math.max(1, now - prev.ts);
+        const dx = x - prev.x;
+        if (Math.abs(dx) > SCRATCH_MIN_DRAG_PX) {
+          const vx = dx / dt; // px/ms
+          const instantEnergy = Math.min(SCRATCH_MAX_ENERGY, Math.abs(vx) * SCRATCH_VELOCITY_SCALE);
+          // Only ever raises energy here; updateScratch()'s per-frame decay
+          // is the only thing that lowers it — keeps a fast flick from
+          // getting diluted by a slower sample landing right after it.
+          if (instantEnergy > scratchEnergy) {
+            scratchEnergy = instantEnergy;
+            scratchDirection = Math.sign(vx) || scratchDirection;
+          }
+        }
+      }
+      pointerHistory.set(key, { x, y, ts: now });
+    }
+    pointers.set(key, { x, y });
   }
 
-  function clearPointer() {
-    pointer.active = false;
+  function clearPointer(key) {
+    pointers.delete(key);
+    pointerHistory.delete(key);
   }
 
   function bindPointerEvents() {
@@ -717,21 +815,25 @@ const Wave = (() => {
     window.addEventListener(
       'touchstart',
       (e) => {
-        const touch = e.touches[0];
-        if (touch) setPointer(touch.clientX, touch.clientY);
+        for (const touch of e.touches) setPointer(touch.identifier, touch.clientX, touch.clientY);
       },
       { passive: true }
     );
     window.addEventListener(
       'touchmove',
       (e) => {
-        const touch = e.touches[0];
-        if (touch) setPointer(touch.clientX, touch.clientY);
+        for (const touch of e.touches) setPointer(touch.identifier, touch.clientX, touch.clientY);
       },
       { passive: true }
     );
-    window.addEventListener('touchend', clearPointer, { passive: true });
-    window.addEventListener('touchcancel', clearPointer, { passive: true });
+    // changedTouches, not touches: touches lists every finger still down,
+    // so clearing all of *those* on one finger lifting would wrongly drop
+    // every other finger still touching the screen.
+    const releaseHandler = (e) => {
+      for (const touch of e.changedTouches) clearPointer(touch.identifier);
+    };
+    window.addEventListener('touchend', releaseHandler, { passive: true });
+    window.addEventListener('touchcancel', releaseHandler, { passive: true });
   }
 
   function init() {
@@ -766,11 +868,77 @@ const Wave = (() => {
     return x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
   }
 
+  // Glow pulse: the glow layer breathes with live bass instead of sitting
+  // at a fixed width/alpha — bass hits now read as a visible "swell" in
+  // the light around the line, not just a shape change. Scaled by
+  // globalScale too (not just bands.bass) so a stray band value can't pop
+  // the glow while sleeping or mid-dissolve, when globalScale is near 0.
+  const GLOW_BASE_WIDTH = 8;
+  const GLOW_BASS_WIDTH_GAIN = 10;
+  const GLOW_BASE_ALPHA = 0.18;
+  const GLOW_BASS_ALPHA_GAIN = 0.22;
+  const GLOW_MAX_ALPHA = 0.5; // clamp so a hot bass hit can't wash out the main line
+
+  // Secret "rave burst": a long-press on the artist name (wired in the
+  // bottom IIFE, no visible affordance — see triggerRaveBurst's own call
+  // site) triggers a few seconds of exaggerated amplitude + a cycling
+  // main-line/glow color, then eases back. Undiscoverable by design,
+  // matching the "obscure, rare" brand language already established
+  // elsewhere in this file's comments.
+  const RAVE_DURATION_MS = 4000;
+  const RAVE_AMP_BOOST = 2.2; // peak globalScale multiplier
+  const RAVE_ATTACK_MS = 300;
+  const RAVE_RELEASE_MS = 700;
+  const RAVE_CYCLE_SPEED = 0.008; // color-cycle angular speed, ms^-1
+  const RAVE_FLASH_MS = 900; // reduced-motion fallback duration
+
+  let raveActive = false;
+  let raveStartTs = null;
+  // Reduced motion never runs the amplitude/color animation (consistent
+  // with pause()'s precedent of skipping dramatic transient effects
+  // outright rather than a toned-down variant) — instead, a single
+  // instant, non-animated color swap: a state change, not motion, so the
+  // easter egg still rewards discovery without introducing motion.
+  let raveFlash = false;
+  let raveFlashStartTs = null;
+
+  function triggerRaveBurst() {
+    if (paused || raveActive) return;
+    if (prefersReducedMotion()) {
+      raveFlash = true;
+      raveFlashStartTs = performance.now();
+      return;
+    }
+    raveActive = true;
+    raveStartTs = performance.now();
+  }
+
+  // 0..1 envelope: eases in (RAVE_ATTACK_MS), holds, eases out
+  // (RAVE_RELEASE_MS) — reuses easeOutExpo rather than a new curve, same
+  // signature motion as the wake sequence. nowTs must be real time (like
+  // pause()'s nowTs), not the possibly-frozen effectiveT.
+  function raveEnvelope(nowTs) {
+    if (!raveActive) return 0;
+    const elapsed = nowTs - raveStartTs;
+    if (elapsed >= RAVE_DURATION_MS) {
+      raveActive = false;
+      return 0;
+    }
+    if (elapsed < RAVE_ATTACK_MS) return easeOutExpo(elapsed / RAVE_ATTACK_MS);
+    const releaseStart = RAVE_DURATION_MS - RAVE_RELEASE_MS;
+    if (elapsed > releaseStart) return 1 - easeOutExpo((elapsed - releaseStart) / RAVE_RELEASE_MS);
+    return 1;
+  }
+
   // The normal 4-layer stack (2 echoes + glow + main), shared between the
   // regular awake/sleeping path and the dormant post-dissolve state — both
   // are just "the wave at some globalScale", the only difference is what
-  // scale and whether it's driven by live audio.
-  function drawLayers(t, bands, globalScale) {
+  // scale and whether it's driven by live audio. raveMix (0..1) is the
+  // rave-burst envelope, if any is active — it only tints the glow and
+  // main line (echoes stay on the normal fg-based colors, keeping the
+  // burst readable instead of noisy), and only as local variables here,
+  // never written back into the module's cached color.fg/color.accent.
+  function drawLayers(t, bands, globalScale, raveMix, raveStatic) {
     tracePath(t, bands, -420, 0.72, 10, globalScale);
     ctx.strokeStyle = hexToRgba(color.fg, 0.08);
     ctx.lineWidth = 1.5;
@@ -785,14 +953,28 @@ const Wave = (() => {
 
     // Glow: one wide, low-alpha stroke under the main line — the cheap
     // alternative to setting shadowBlur every frame.
+    const glowPulse = bands.bass * globalScale;
+    const glowAlpha = Math.min(GLOW_MAX_ALPHA, GLOW_BASE_ALPHA + glowPulse * GLOW_BASS_ALPHA_GAIN);
+    let glowStroke = hexToRgba(color.accent, glowAlpha);
+    let mainStroke = color.fg;
+    if (raveMix > 0) {
+      // Static flash (reduced motion): hold one fixed blend, no oscillation
+      // — a color swap is a state change, not motion.
+      const cyclePos = raveStatic ? 0.5 : (Math.sin(t * RAVE_CYCLE_SPEED) + 1) / 2; // 0..1
+      const glowRgb = mixHex(color.accent, color.selection, raveMix * cyclePos);
+      const mainRgb = mixHex(color.fg, color.selection, raveMix * (1 - cyclePos));
+      glowStroke = rgbaCss(glowRgb, Math.min(1, glowAlpha + raveMix * 0.5)); // brighter, still not fully solid
+      mainStroke = rgbaCss(mainRgb, 1);
+    }
+
     tracePath(t, bands, 0, 1, 0, globalScale);
-    ctx.strokeStyle = hexToRgba(color.accent, 0.18);
-    ctx.lineWidth = 8;
+    ctx.strokeStyle = glowStroke;
+    ctx.lineWidth = (GLOW_BASE_WIDTH + glowPulse * GLOW_BASS_WIDTH_GAIN) * (1 + raveMix); // wider halo mid-burst
     ctx.lineJoin = 'round';
     ctx.stroke();
 
     tracePath(t, bands, 0, 1, 0, globalScale);
-    ctx.strokeStyle = color.fg;
+    ctx.strokeStyle = mainStroke;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
     ctx.stroke();
@@ -815,6 +997,11 @@ const Wave = (() => {
   function pause(nowTs) {
     if (paused) return;
     paused = true;
+    // A burst mid-mute shouldn't leave dangling state that resumes
+    // strangely on unmute (dormant redraw already ignores rave entirely,
+    // but this keeps raveActive/raveFlash from re-surfacing at all).
+    raveActive = false;
+    raveFlash = false;
     frozenPoints = capturePoints(lastT, lastBands, lastGlobalScale);
     if (prefersReducedMotion()) {
       // Skip the burst entirely — jump straight to the dormant state next
@@ -843,6 +1030,7 @@ const Wave = (() => {
     // eases and settles normally; reduced motion targets automatic motion,
     // not a response to something the visitor is actively doing.
     const effectiveT = prefersReducedMotion() ? 0 : t;
+    updateScratch(dt);
 
     ctx.clearRect(0, 0, width, height);
 
@@ -874,13 +1062,34 @@ const Wave = (() => {
         // stepPhysics keeps running so any pointer-spring offset decays
         // cleanly rather than freezing mid-interaction.
         stepPhysics(effectiveT, bands, dt);
-        drawLayers(effectiveT, bands, SLEEP_SCALE);
+        drawLayers(effectiveT, bands, SLEEP_SCALE, 0, false);
       }
 
       lastT = effectiveT;
       lastBands = bands;
       lastGlobalScale = SLEEP_SCALE;
       return;
+    }
+
+    // Rave burst (see triggerRaveBurst): raveAmpMix drives the amplitude
+    // boost (only while the full animated burst is actually running);
+    // raveColorMix drives drawLayers' color cycle and is also nonzero
+    // during the reduced-motion flash fallback, which never touches
+    // amplitude. raveStatic tells drawLayers to hold one fixed blended
+    // color instead of oscillating — the flash is a state change, not motion.
+    let raveAmpMix = 0;
+    let raveColorMix = 0;
+    let raveStatic = false;
+    if (raveActive) {
+      raveAmpMix = raveEnvelope(t);
+      raveColorMix = raveAmpMix;
+    } else if (raveFlash) {
+      if (t - raveFlashStartTs < RAVE_FLASH_MS) {
+        raveColorMix = 1;
+        raveStatic = true;
+      } else {
+        raveFlash = false;
+      }
     }
 
     // wakeProgress is 0 while sleeping, ramps 0->1 over the wake sequence
@@ -898,10 +1107,28 @@ const Wave = (() => {
     lastGlobalScale = globalScale;
 
     stepPhysics(effectiveT, bands, dt);
-    drawLayers(effectiveT, bands, globalScale);
+    drawLayers(effectiveT, bands, globalScale, raveColorMix, raveStatic);
   }
 
-  return { init, draw, refreshColors: readColorTokens, pause, resume };
+  return {
+    init,
+    draw,
+    refreshColors: readColorTokens,
+    pause,
+    resume,
+    // Test-only, zero runtime cost — mirrors the existing
+    // window.diskevichDebug.mobileMode getter pattern.
+    get pointerCount() {
+      return pointers.size;
+    },
+    get scratchEnergy() {
+      return scratchEnergy;
+    },
+    triggerRaveBurst,
+    get raveActive() {
+      return raveActive;
+    },
+  };
 })();
 
 /* --------------------------------------------------------------------------
@@ -972,6 +1199,7 @@ const Cursor = (() => {
 
   Wave.init();
   Cursor.init();
+  Magnetic.init();
 
   // Wake sequence (Phase 7): one duration drives all three parts of the
   // reveal — the sleeping-state CSS, the wave's amplitude ramp, and the
@@ -1066,6 +1294,27 @@ const Cursor = (() => {
     applyMix(Number(crossfaderInput.value) / 100);
   });
 
+  // The entrance cascade's `rise-in` CSS animation uses fill-mode:forwards
+  // so its final frame (opacity:1, transform:translateY(0)) holds
+  // indefinitely — but a *held* CSS animation keeps overriding the same
+  // property on that element even after it's visually finished, at a
+  // higher cascade priority than any inline style JS sets afterward. That
+  // silently defeated Magnetic's `el.style.transform` on .nav-item/
+  // .mute-toggle (both entrance-animated) until this: once the animation
+  // genuinely ends, release it (clearing `animation` inline removes its
+  // hold on the property) and bake its final frame in as plain inline
+  // styles, so later JS-driven transforms apply normally. One delegated
+  // listener since several elements share the same rise-in keyframe.
+  document.addEventListener('animationend', (e) => {
+    if (e.animationName !== 'rise-in') return;
+    e.target.style.animation = 'none';
+    e.target.style.opacity = '1';
+    // 'none', not '' — see REST_TRANSFORM's comment in Magnetic: some of
+    // these elements (.nav-item, .mute-toggle) carry an unconditional base
+    // transform:translateY(16px) rule that '' would fall straight back to.
+    e.target.style.transform = 'none';
+  });
+
   muteToggle.addEventListener('click', () => {
     const muted = AudioEngine.toggleMute();
     muteToggle.setAttribute('aria-pressed', String(muted));
@@ -1105,6 +1354,46 @@ const Cursor = (() => {
     // init and only re-reads on demand, not every frame.
     Wave.refreshColors();
   });
+
+  // Secret "rave burst": long-press on the artist name. No visible
+  // affordance, no keyboard equivalent — .artist-name is a plain
+  // non-interactive <h1>, so nothing keyboard-reachable is affected.
+  // Pointer Events unify mouse+touch for this one-off addition even
+  // though the rest of the file uses separate mouse/touch handlers —
+  // simpler than duplicating press-and-hold logic for two input types.
+  (() => {
+    const RAVE_LONG_PRESS_MS = 1700;
+    const RAVE_MOVE_CANCEL_PX = 24; // movement beyond this cancels the press
+    const artistNameEl = document.querySelector('.artist-name');
+    if (!artistNameEl) return;
+
+    let pressTimer = null;
+    let pressStart = null;
+
+    function cancelPress() {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+      pressStart = null;
+      artistNameEl.classList.remove('rave-pressing');
+    }
+
+    artistNameEl.addEventListener('pointerdown', (e) => {
+      if (body.dataset.state !== 'awake') return;
+      pressStart = { x: e.clientX, y: e.clientY };
+      artistNameEl.classList.add('rave-pressing');
+      pressTimer = setTimeout(() => {
+        Wave.triggerRaveBurst();
+        pressStart = null;
+        artistNameEl.classList.remove('rave-pressing');
+      }, RAVE_LONG_PRESS_MS);
+    });
+    artistNameEl.addEventListener('pointermove', (e) => {
+      if (!pressStart) return;
+      const moved = Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y);
+      if (moved > RAVE_MOVE_CANCEL_PX) cancelPress();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((evt) => artistNameEl.addEventListener(evt, cancelPress));
+  })();
 
   // Dev/debug access, zero runtime cost otherwise: window.diskevichAudio.bands
   // for live bass/mid/high, window.diskevichDebug.mobileMode / .mix to check
