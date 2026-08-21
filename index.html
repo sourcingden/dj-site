@@ -61,69 +61,28 @@
   <div class="grain" aria-hidden="true"></div>
 
   <main class="scene">
-    <header class="mark">
-      <h1 class="artist-name">diskevich</h1>
-      <p class="tagline">rare groove is not a genre. It's a grudge against everything obvious.</p>
-    </header>
+    <!-- Permanent accessible name: the visual wordmark below is
+         aria-hidden and only meaningfully present once the crossfader has
+         been dragged toward booking, so this is the one thing screen
+         reader users get regardless of fader position. -->
+    <h1 class="sr-only">diskevich</h1>
 
-    <nav class="site-nav" aria-label="Site sections">
-      <button type="button" class="nav-item" data-overlay-target="bio">bio</button>
-      <button type="button" class="nav-item" data-overlay-target="dates">dates</button>
-      <button type="button" class="nav-item" data-overlay-target="booking">booking</button>
-    </nav>
-
-    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme">
-      <svg class="theme-icon theme-icon--sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="4.5" />
-        <path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
-      </svg>
-      <svg class="theme-icon theme-icon--moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M20.5 14.4A8.5 8.5 0 1 1 9.6 3.5a7 7 0 0 0 10.9 10.9Z" />
-      </svg>
-    </button>
-
-    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio">
-      <svg class="mute-icon mute-icon--on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M11 5 6 9H2v6h4l5 4Z" />
-        <path d="M19.1 4.9a10 10 0 0 1 0 14.2M15.5 8.5a5 5 0 0 1 0 7.1" />
-      </svg>
-      <svg class="mute-icon mute-icon--off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M11 5 6 9H2v6h4l5 4Z" />
-        <line x1="23" y1="9" x2="17" y2="15" />
-        <line x1="17" y1="9" x2="23" y2="15" />
-      </svg>
-    </button>
-
-    <button type="button" id="tap-to-enter" class="tap-to-enter">
-      <span class="tap-ring" aria-hidden="true"></span>
-      <span class="tap-label">tap to enter</span>
-    </button>
-  </main>
-
-  <div class="overlay" id="overlay-bio" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="bio-title" aria-hidden="true" inert>
-    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
-    <div class="overlay-inner">
-      <h2 id="bio-title">bio</h2>
-      <p class="overlay-text">Where the unfamiliar becomes physical. Every track a question, every groove an answer your body gives before your brain does.</p>
-    </div>
-  </div>
-
-  <div class="overlay" id="overlay-dates" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="dates-title" aria-hidden="true" inert>
-    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
-    <div class="overlay-inner">
-      <h2 id="dates-title">dates</h2>
+    <!-- Deck B — the person who signs the contract. Fully in the DOM at
+         all times; opacity/transform are bound to --mix (set by main.js on
+         every crossfader 'input' event), and inert/aria-hidden toggle at a
+         small threshold once it's become meaningfully legible — see
+         main.js's applyMix(). At mix=0 this is the "zero text" side of the
+         brief: nothing here reads as visible or reachable. -->
+    <div class="deck-b-panel" id="deck-b-panel" aria-hidden="true" inert>
+      <div class="mark">
+        <h2 class="artist-name" aria-hidden="true">diskevich</h2>
+        <p class="tagline">rare groove is not a genre. It's a grudge against everything obvious.</p>
+      </div>
+      <p class="bio-text">Where the unfamiliar becomes physical. Every track a question, every groove an answer your body gives before your brain does.</p>
       <ul class="dates-list">
         <li><span class="date-day">13.09.2026</span><span class="date-venue">Torchyn, Bruxt</span></li>
         <li><span class="date-day">03.10.2026</span><span class="date-venue">OPIK w/ Closer</span></li>
       </ul>
-    </div>
-  </div>
-
-  <div class="overlay" id="overlay-booking" data-overlay-panel role="dialog" aria-modal="true" aria-labelledby="booking-title" aria-hidden="true" inert>
-    <button type="button" class="overlay-close" data-overlay-close aria-label="Close">close</button>
-    <div class="overlay-inner">
-      <h2 id="booking-title">booking</h2>
-      <p class="overlay-text">for bookings and inquiries, reach out via Telegram or Instagram. listen on SoundCloud.</p>
       <div class="social-links">
         <a class="social-link" href="https://t.me/sourcingdenis" target="_blank" rel="noopener noreferrer">
           <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -149,7 +108,48 @@
         </a>
       </div>
     </div>
-  </div>
+
+    <!-- The crossfader: the site's only navigation. 0 = full artist
+         (immersive audio-visual, no text), 100 = full booking (bio, dates,
+         contact, audio silent). See main.js's "Crossfader" section. -->
+    <div class="crossfader">
+      <span class="crossfader-label crossfader-label--a" aria-hidden="true">artist</span>
+      <input
+        type="range"
+        id="crossfader-input"
+        class="crossfader-input"
+        min="0"
+        max="100"
+        value="0"
+        step="1"
+        aria-label="Crossfader. Left is full artist: immersive audio and visuals, no text. Right is full booking: bio, dates and contact links, with audio fading to silence. Drag to blend both in whatever proportion you like."
+      />
+      <span class="crossfader-label crossfader-label--b" aria-hidden="true">booking</span>
+      <span class="fader-hint" aria-hidden="true">drag to mix</span>
+    </div>
+
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme">
+      <svg class="theme-icon theme-icon--sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.5" />
+        <path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
+      </svg>
+      <svg class="theme-icon theme-icon--moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20.5 14.4A8.5 8.5 0 1 1 9.6 3.5a7 7 0 0 0 10.9 10.9Z" />
+      </svg>
+    </button>
+
+    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio">
+      <svg class="mute-icon mute-icon--on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 5 6 9H2v6h4l5 4Z" />
+        <path d="M19.1 4.9a10 10 0 0 1 0 14.2M15.5 8.5a5 5 0 0 1 0 7.1" />
+      </svg>
+      <svg class="mute-icon mute-icon--off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M11 5 6 9H2v6h4l5 4Z" />
+        <line x1="23" y1="9" x2="17" y2="15" />
+        <line x1="17" y1="9" x2="23" y2="15" />
+      </svg>
+    </button>
+  </main>
 
   <script src="main.js" defer></script>
 </body>

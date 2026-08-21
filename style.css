@@ -1,6 +1,10 @@
 /* ==========================================================================
    diskevich — design system
-   Concept: "Живая волна" (Living Wave)
+   Concept: "Crossfader" — two decks (artist / booking), one continuous mix.
+   A single range input drives everything: --mix (0..1) blends the wave's
+   amplitude and the deck-b-panel's opacity in style; AudioEngine reads the
+   same number for volume, in main.js. Nothing here is a "section" — it's
+   all one scene at whatever proportion the visitor leaves the fader at.
 
    Font pairing rationale:
    - Display: "Unbounded" (Google Fonts, single external request) — a huge,
@@ -85,9 +89,9 @@
    Same palette logic, inverted: cream void, warm-charcoal ink, a deeper
    burnt-copper accent (the original copper drops to 2.84:1 on this
    background — legible as a glow, not as text, so it's darkened here
-   specifically for the roles that render as text: nav hover, links,
-   date labels). fg/fg-muted/accent all independently re-verified at
-   >=4.5:1 against this background, not just carried over.
+   specifically for the roles that render as text: date labels, links.
+   fg/fg-muted/accent all independently re-verified at >=4.5:1 against this
+   background, not just carried over.
    Applied via [data-theme] rather than prefers-color-scheme directly,
    because the toggle (main.js) needs to be able to override the system
    setting and have that choice persist. */
@@ -148,6 +152,25 @@ h2 {
   font-family: var(--font-display);
   font-weight: 700;
   line-height: 1;
+}
+
+/* Visually-hidden-but-accessible: carries the site's real name (see the
+   permanent <h1> in index.html) without it needing to be visible — the big
+   styled wordmark inside .deck-b-panel is aria-hidden and only meaningfully
+   present once the crossfader has been dragged, so this is what screen
+   reader users get regardless of fader position. Standard clip-based
+   pattern, not display:none (which would drop it from the accessibility
+   tree entirely). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ---- Canvas + grain layers ---- */
@@ -256,7 +279,7 @@ body.has-custom-cursor * {
   /* The wave sits behind at z-index 1; this makes the letterforms invert
      wherever the line crosses them, so the wave visibly passes *through*
      the name instead of just running behind a flat opaque shape. Plain
-     z-index stacking (used to keep .mark above the canvas) doesn't create
+     z-index stacking (used to keep .scene above the canvas) doesn't create
      a blend-isolation boundary on its own, so this reaches the canvas.
 
      This specifically requires a near-black backdrop: difference(X, Y)
@@ -281,105 +304,248 @@ body.has-custom-cursor * {
   color: var(--color-fg-muted);
 }
 
-/* ---- Entrance ----
-   Letters/tagline/nav/mute-toggle stay hidden until the tap, then cascade
-   in — reusing the same wake moment the wave-unfurl and audio fade-in are
-   already synced to (main.js's tap handler), not a separate trigger. Wrapped
-   entirely in this media query rather than just zeroing durations: under
-   reduced motion these elements should never pass through a hidden state
-   at all, they should just already be there — not "instantly revealed",
-   genuinely never hidden. theme-toggle is deliberately excluded: it has to
-   stay usable before the tap (see .theme-toggle's own z-index comment). */
-@media (prefers-reduced-motion: no-preference) {
-  @keyframes rise-in {
-    from {
-      opacity: 0;
-      transform: translateY(28px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .artist-name .letter {
-    display: inline-block;
-    opacity: 0;
-    transform: translateY(28px);
-  }
-
-  body[data-state='awake'] .artist-name .letter {
-    animation: rise-in 700ms var(--ease-out-expo) forwards;
-    /* --i is set per-span in main.js (splitLetters) */
-    animation-delay: calc(var(--i) * 35ms);
-  }
-
-  .tagline,
-  .nav-item,
-  .mute-toggle {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-
-  body[data-state='awake'] .tagline {
-    animation: rise-in 600ms var(--ease-out-expo) forwards;
-    animation-delay: 480ms;
-  }
-
-  body[data-state='awake'] .nav-item {
-    animation: rise-in 600ms var(--ease-out-expo) forwards;
-  }
-  body[data-state='awake'] .nav-item:nth-child(1) {
-    animation-delay: 640ms;
-  }
-  body[data-state='awake'] .nav-item:nth-child(2) {
-    animation-delay: 700ms;
-  }
-  body[data-state='awake'] .nav-item:nth-child(3) {
-    animation-delay: 760ms;
-  }
-
-  body[data-state='awake'] .mute-toggle {
-    animation: rise-in 500ms var(--ease-out-expo) forwards;
-    animation-delay: 300ms;
-  }
+/* ---- Deck B panel ----
+   Bio / dates / contact — the "person who signs the contract" half of the
+   crossfader. Always in the DOM; opacity and a slight rise are bound
+   directly to --mix (set on <html> by main.js's applyMix() on every fader
+   'input' event), so this is a continuous blend, not a shown/hidden
+   section. inert/aria-hidden are toggled in JS at a small mix threshold —
+   see applyMix()'s own comment for why a hard cutoff is unavoidable there
+   even though the visual side is fully continuous. A soft radial scrim
+   behind the text (::before) keeps it legible over the wave without a
+   hard modal box; it fades with the same opacity as everything else here
+   since it's a child of this element. */
+.deck-b-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: 42rem;
+  /* This panel now shares the scene with the crossfader (fixed, bottom)
+     instead of being its own full-screen overlay, so it needs to fit
+     comfortably above it on short viewports too — cap its height and let
+     it scroll internally on the rare screen where bio+dates+socials
+     genuinely can't all fit, rather than visually colliding with the
+     fader. */
+  max-height: calc(100dvh - var(--space-lg) * 2 - var(--safe-t) - var(--safe-b) - 72px);
+  overflow-y: auto;
+  padding: 0 calc(var(--space-md) + var(--safe-r)) var(--space-sm) calc(var(--space-md) + var(--safe-l));
+  opacity: var(--mix, 0);
+  transform: translateY(calc((1 - var(--mix, 0)) * 16px));
+  transition: opacity var(--dur-instant) linear, transform var(--dur-instant) var(--ease-out-expo);
 }
 
-/* ---- Nav ---- */
-.site-nav {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--space-md) + var(--safe-b));
-  z-index: 3;
+/* The big wordmark reused the full hero display size when it was the only
+   thing on screen (Living Wave concept); here it's one of five stacked
+   blocks sharing the scene with bio/dates/socials, so it's scaled down
+   considerably to leave room for the rest without crowding the crossfader. */
+.deck-b-panel .artist-name {
+  font-size: clamp(2rem, 8vw, 4.5rem);
+}
+
+.deck-b-panel::before {
+  content: '';
+  position: absolute;
+  inset: -12% -8%;
+  z-index: -1;
+  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.bio-text {
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  color: var(--color-fg-muted);
+  max-width: 36ch;
+  margin: 0 auto;
+}
+
+.dates-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.dates-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-xs) var(--space-sm);
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+}
+
+.date-day {
+  color: var(--color-accent);
+}
+
+.date-venue {
+  color: var(--color-fg);
+}
+
+/* ---- Social links (deck B panel) ----
+   Icon + small caption rather than bare text — three inline SVGs (no icon
+   font/library), monoline strokes matching the favicon's wave glyph, tinted
+   via currentColor so they inherit the theme automatically. */
+.social-links {
   display: flex;
   justify-content: center;
   gap: var(--space-lg);
 }
 
-.nav-item {
+.social-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  padding: var(--space-2xs);
+  color: var(--color-fg-muted);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out-expo);
+}
+
+.social-link:hover,
+.social-link:focus-visible {
+  color: var(--color-accent);
+}
+
+.social-link:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.social-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.social-label {
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+}
+
+/* ---- Crossfader ----
+   The site's only navigation. A native <input type="range"> — not a custom
+   div — specifically for free keyboard support (arrow keys, Home/End) and
+   correct value announcement; styled here to read as a physical DJ mixer
+   fader instead of a browser default. Fixed bottom-center, same slot the
+   old bio/dates/booking nav used to occupy. */
+.crossfader {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-md) + var(--safe-b));
+  transform: translateX(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: min(420px, calc(100vw - var(--space-md) * 2));
+}
+
+.crossfader-label {
   font-family: var(--font-text);
   font-size: var(--fs-nav);
   letter-spacing: 0.12em;
   text-transform: lowercase;
   color: var(--color-fg-muted);
-  min-height: var(--tap-min);
-  min-width: var(--tap-min);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-2xs);
-  transition: color var(--dur-fast) var(--ease-out-expo);
+  white-space: nowrap;
 }
 
-.nav-item:hover,
-.nav-item:focus-visible {
-  color: var(--color-accent);
+.crossfader-input {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--tap-min);
+  background: transparent;
+  cursor: pointer;
 }
 
-.nav-item:focus-visible {
+.crossfader-input::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--color-line);
+  border-radius: 2px;
+}
+
+.crossfader-input::-moz-range-track {
+  height: 3px;
+  background: var(--color-line);
+  border-radius: 2px;
+}
+
+/* Thick rectangular thumb, mixer-style, rather than a round default —
+   width/height are the physical fader cap; margin-top centers it on the
+   3px webkit track ((3 - 28) / 2). Firefox's ::-moz-range-thumb needs no
+   such offset — it centers on the track automatically. */
+.crossfader-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 28px;
+  margin-top: -12.5px;
+  border-radius: 3px;
+  background: var(--color-accent);
+  border: 1px solid var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-line);
+  transition: transform var(--dur-fast) var(--ease-out-expo);
+}
+
+.crossfader-input::-moz-range-thumb {
+  width: 14px;
+  height: 28px;
+  border-radius: 3px;
+  background: var(--color-accent);
+  border: 1px solid var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-line);
+  transition: transform var(--dur-fast) var(--ease-out-expo);
+}
+
+.crossfader-input:hover::-webkit-slider-thumb,
+.crossfader-input:focus-visible::-webkit-slider-thumb {
+  transform: scaleY(1.15);
+}
+
+.crossfader-input:hover::-moz-range-thumb,
+.crossfader-input:focus-visible::-moz-range-thumb {
+  transform: scaleY(1.15);
+}
+
+.crossfader-input:focus-visible {
   outline: 1px solid var(--color-accent);
   outline-offset: 4px;
+}
+
+.fader-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--space-xs));
+  transform: translateX(-50%);
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.15em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+  opacity: 0.8;
+  pointer-events: none;
+  transition: opacity var(--dur-medium) var(--ease-out-expo);
+}
+
+/* Fades out for good the moment the fader's first been touched — see
+   main.js's beginCrossfading(). --dur-medium already zeroes under
+   prefers-reduced-motion, so this just disappears instantly there instead
+   of via a fade, matching the rest of the site's reduced-motion handling. */
+body[data-state='awake'] .fader-hint {
+  opacity: 0;
 }
 
 /* ---- Mute toggle ---- */
@@ -395,7 +561,15 @@ body.has-custom-cursor * {
   justify-content: center;
   border: 1px solid var(--color-line);
   border-radius: 50%;
-  transition: border-color var(--dur-fast) var(--ease-out-expo);
+  opacity: 0;
+  transition: border-color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo);
+}
+
+/* Hidden until the crossfader's been touched — there's nothing to mute
+   before then anyway (audio hasn't started). --dur-medium zeroes under
+   reduced motion, so it just appears instantly there instead of fading. */
+body[data-state='awake'] .mute-toggle {
+  opacity: 1;
 }
 
 .mute-toggle:hover,
@@ -432,11 +606,11 @@ body[data-muted='true'] .mute-icon--off {
 }
 
 /* ---- Theme toggle ----
-   z-index 11, above .tap-to-enter's 10 (unlike mute-toggle, left at 3):
-   visual comfort should be adjustable immediately on landing, before
-   committing to the audio-gated tap — mute has nothing to mute yet at
-   that point, but a light-sensitive visitor shouldn't have to sit
-   through a full-brightness dark screen just to reach the switch. */
+   z-index 11, above everything else on the page: visual comfort should be
+   adjustable immediately on landing, before the crossfader's even been
+   touched — a light-sensitive visitor shouldn't have to sit through a
+   full-brightness dark screen just to reach the switch. Unlike mute-toggle,
+   always visible from load (nothing here is gated on 'awake'). */
 .theme-toggle {
   position: fixed;
   top: calc(var(--space-md) + var(--safe-t));
@@ -478,207 +652,4 @@ body[data-muted='true'] .mute-icon--off {
 
 :root[data-theme='light'] .theme-icon--moon {
   display: none;
-}
-
-/* ---- Tap to enter ---- */
-.tap-to-enter {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  background: var(--color-bg);
-  transition: opacity var(--dur-wake) var(--ease-out-expo), visibility var(--dur-wake) var(--ease-out-expo);
-}
-
-.tap-ring {
-  position: absolute;
-  width: 88px;
-  height: 88px;
-  border: 1px solid var(--color-accent-soft);
-  border-radius: 50%;
-  animation: pulse-ring 2.4s var(--ease-out-expo) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tap-ring {
-    animation: none;
-  }
-}
-
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.85);
-    opacity: 0.6;
-  }
-  70% {
-    transform: scale(1.4);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.4);
-    opacity: 0;
-  }
-}
-
-.tap-label {
-  position: relative;
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.2em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-}
-
-body[data-state='awake'] .tap-to-enter {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-/* ---- Overlays ---- */
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  background: var(--color-overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  /* Focus/interaction gating is handled by the `inert` attribute (toggled
-     in JS), not visibility — visibility:hidden would block .focus() on the
-     close button at the exact moment we open, since its transition to
-     'visible' isn't guaranteed to have taken effect yet on that same tick. */
-  /* One signature motion: fade + a slight rise. No separate effects per
-     overlay, no per-element stagger — every overlay opens/closes the same
-     way, at the same duration, so it reads as one system. */
-  transform: translateY(14px);
-  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
-}
-
-.overlay[data-open='true'] {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.overlay-inner {
-  max-width: 42rem;
-  width: 100%;
-  padding: 0 calc(var(--space-md) + var(--safe-r)) 0 calc(var(--space-md) + var(--safe-l));
-  text-align: center;
-}
-
-.overlay-inner h2 {
-  font-size: var(--fs-h2);
-  text-transform: lowercase;
-  margin-bottom: var(--space-md);
-}
-
-.overlay-text {
-  font-family: var(--font-text);
-  font-size: var(--fs-body);
-  line-height: 1.7;
-  color: var(--color-fg-muted);
-  max-width: 36ch;
-  margin: 0 auto;
-}
-
-.dates-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.dates-list li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-xs) var(--space-sm);
-  font-family: var(--font-text);
-  font-size: var(--fs-body);
-}
-
-.date-day {
-  color: var(--color-accent);
-}
-
-.date-venue {
-  color: var(--color-fg);
-}
-
-/* ---- Social links (booking overlay) ----
-   Icon + small caption rather than bare text — three inline SVGs (no icon
-   font/library), monoline strokes matching the favicon's wave glyph, tinted
-   via currentColor so they inherit the theme automatically. */
-.social-links {
-  display: flex;
-  justify-content: center;
-  gap: var(--space-lg);
-  margin-top: var(--space-md);
-}
-
-.social-link {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2xs);
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  padding: var(--space-2xs);
-  color: var(--color-fg-muted);
-  text-decoration: none;
-  transition: color var(--dur-fast) var(--ease-out-expo);
-}
-
-.social-link:hover,
-.social-link:focus-visible {
-  color: var(--color-accent);
-}
-
-.social-link:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 3px;
-}
-
-.social-icon {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-}
-
-.social-label {
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: lowercase;
-}
-
-.overlay-close {
-  position: fixed;
-  top: calc(var(--space-md) + var(--safe-t));
-  right: calc(var(--space-md) + var(--safe-r));
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.12em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-}
-
-.overlay-close:hover,
-.overlay-close:focus-visible {
-  color: var(--color-accent);
-}
-
-.overlay-close:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 3px;
 }
