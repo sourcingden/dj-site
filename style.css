@@ -77,6 +77,14 @@
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
   --tap-min: 44px;
+  /* The crossfader's real total footprint from the viewport's bottom edge:
+     its own bottom offset (--space-md) + its height (--tap-min) + the gap
+     to the fader-hint above it (--space-xs) + the hint's own line (~1.3em).
+     .scene's bottom padding is reserved to at least this (see .scene,
+     below) so nothing centered in it — namely #deck-b-panel — can ever
+     render underneath the fixed crossfader, on any viewport height. Kept
+     as one named value rather than repeating the sum wherever it's needed. */
+  --fader-zone: calc(var(--space-md) + var(--tap-min) + var(--space-xs) + 1.3em);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -253,8 +261,15 @@ body.has-custom-cursor * {
   align-items: center;
   justify-content: center;
   text-align: center;
+  /* Bottom padding is whichever is larger: the usual --space-lg breathing
+     room, or the crossfader's actual footprint (--fader-zone) — on a short
+     viewport the fader zone is taller than --space-lg ever was, and
+     without this, centered content (#deck-b-panel) can render underneath
+     the fixed crossfader regardless of how carefully *its own* max-height
+     is capped, because centering happens within whatever room this
+     padding leaves, not around the fader zone directly. */
   padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
-    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
+    calc(max(var(--space-lg), var(--fader-zone)) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
 }
 
 .mark {
@@ -337,12 +352,17 @@ body.has-custom-cursor * {
   gap: var(--space-md);
   max-width: 42rem;
   /* This panel now shares the scene with the crossfader (fixed, bottom)
-     instead of being its own full-screen overlay, so it needs to fit
-     comfortably above it on short viewports too — cap its height and let
-     it scroll internally on the rare screen where bio+dates+socials
-     genuinely can't all fit, rather than visually colliding with the
-     fader. */
-  max-height: calc(100dvh - var(--space-lg) * 2 - var(--safe-t) - var(--safe-b) - 72px);
+     instead of being its own full-screen overlay. Its cap matches .scene's
+     own content-box height exactly (100dvh minus .scene's own padding,
+     including the --fader-zone reservation applied there) — not a
+     separately-guessed number: .scene's padding is what actually keeps
+     the crossfader clear, this only has to not exceed the room that
+     leaves. Whatever still doesn't fit (a very short landscape phone, once
+     content is already tightened by the max-height media query below)
+     scrolls internally rather than overflowing past that box. */
+  max-height: calc(
+    100dvh - var(--safe-t) - var(--safe-b) - var(--space-lg) - max(var(--space-lg), var(--fader-zone))
+  );
   overflow-y: auto;
   padding: 0 calc(var(--space-md) + var(--safe-r)) var(--space-sm) calc(var(--space-md) + var(--safe-l));
   opacity: var(--mix, 0);
@@ -356,6 +376,38 @@ body.has-custom-cursor * {
    considerably to leave room for the rest without crowding the crossfader. */
 .deck-b-panel .artist-name {
   font-size: clamp(2rem, 8vw, 4.5rem);
+}
+
+/* Short viewports (a phone in landscape, mainly): the panel's natural
+   content height comfortably clears a portrait phone but not a ~375-430px-
+   tall landscape one. Tighten spacing and type here rather than lean on
+   scrolling alone — a same-screen reveal is the whole point of the
+   crossfader; scrolling is the fallback for what's still too tall after
+   this, not the primary answer. Deliberately placed *after* the rules it
+   overrides (same specificity either way — two classes — so source order
+   is what actually decides the winner, not the media condition matching). */
+@media (max-height: 480px) {
+  .deck-b-panel {
+    gap: var(--space-xs);
+  }
+
+  .deck-b-panel .artist-name {
+    font-size: clamp(1.4rem, 6vw, 2rem);
+  }
+
+  .deck-b-panel .tagline,
+  .deck-b-panel .bio-text {
+    font-size: var(--fs-small);
+    line-height: 1.5;
+  }
+
+  .deck-b-panel .dates-list {
+    gap: var(--space-xs);
+  }
+
+  .deck-b-panel .dates-list li {
+    font-size: var(--fs-small);
+  }
 }
 
 .deck-b-panel::before {
@@ -420,7 +472,7 @@ body.has-custom-cursor * {
   padding: var(--space-2xs);
   color: var(--color-fg-muted);
   text-decoration: none;
-  transition: color var(--dur-fast) var(--ease-out-expo);
+  transition: color var(--dur-fast) var(--ease-out-expo), transform var(--dur-fast) var(--ease-spring);
 }
 
 .social-link:hover,
@@ -472,6 +524,7 @@ body.has-custom-cursor * {
   text-transform: lowercase;
   color: var(--color-fg-muted);
   white-space: nowrap;
+  transition: transform var(--dur-fast) var(--ease-spring);
 }
 
 .crossfader-input {
@@ -576,7 +629,8 @@ body[data-state='awake'] .fader-hint {
   border: 1px solid var(--color-line);
   border-radius: 50%;
   opacity: 0;
-  transition: border-color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo);
+  transition: border-color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo),
+    transform var(--dur-fast) var(--ease-spring);
 }
 
 /* Hidden until the crossfader's been touched — there's nothing to mute

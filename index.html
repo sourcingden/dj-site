@@ -113,7 +113,7 @@
          (immersive audio-visual, no text), 100 = full booking (bio, dates,
          contact, audio silent). See main.js's "Crossfader" section. -->
     <div class="crossfader">
-      <span class="crossfader-label crossfader-label--a" aria-hidden="true">artist</span>
+      <span class="crossfader-label crossfader-label--a" aria-hidden="true" data-magnetic>artist</span>
       <input
         type="range"
         id="crossfader-input"
@@ -124,11 +124,11 @@
         step="1"
         aria-label="Crossfader. Left is full artist: immersive audio and visuals, no text. Right is full booking: bio, dates and contact links, with audio fading to silence. Drag to blend both in whatever proportion you like."
       />
-      <span class="crossfader-label crossfader-label--b" aria-hidden="true">booking</span>
+      <span class="crossfader-label crossfader-label--b" aria-hidden="true" data-magnetic>booking</span>
       <span class="fader-hint" aria-hidden="true">drag to mix</span>
     </div>
 
-    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme">
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme" data-magnetic>
       <svg class="theme-icon theme-icon--sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="4.5" />
         <path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6" />
@@ -138,7 +138,7 @@
       </svg>
     </button>
 
-    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio">
+    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio" data-magnetic>
       <svg class="mute-icon mute-icon--on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M11 5 6 9H2v6h4l5 4Z" />
         <path d="M19.1 4.9a10 10 0 0 1 0 14.2M15.5 8.5a5 5 0 0 1 0 7.1" />

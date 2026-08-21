@@ -809,8 +809,8 @@ const Wave = (() => {
     // window even when the topmost element under the cursor is a button
     // (crossfader, mute, theme toggle), so the distortion field stays live
     // over UI.
-    window.addEventListener('mousemove', (e) => setPointer(e.clientX, e.clientY));
-    window.addEventListener('mouseleave', clearPointer);
+    window.addEventListener('mousemove', (e) => setPointer('mouse', e.clientX, e.clientY));
+    window.addEventListener('mouseleave', () => clearPointer('mouse'));
 
     window.addEventListener(
       'touchstart',
@@ -1101,7 +1101,13 @@ const Wave = (() => {
     // afterward reshapes the wave live and continuously, with no separate
     // animation of its own — the crossfader IS the animation from then on.
     const wakeTarget = lerp(1, BUSINESS_SCALE, mix);
-    const globalScale = SLEEP_SCALE + (wakeTarget - SLEEP_SCALE) * easeOutExpo(wakeProgress);
+    const baseGlobalScale = SLEEP_SCALE + (wakeTarget - SLEEP_SCALE) * easeOutExpo(wakeProgress);
+    // Rave burst (see triggerRaveBurst) multiplies on top of that
+    // mix-appropriate base rather than a flat full-amplitude assumption —
+    // a burst triggered near full-booking still boosts proportionally off
+    // the dimmer, quieter base the fader currently implies, instead of
+    // jumping to full-artist amplitude regardless of where the fader is.
+    const globalScale = baseGlobalScale * (1 + raveAmpMix * (RAVE_AMP_BOOST - 1));
     lastT = effectiveT;
     lastBands = bands;
     lastGlobalScale = globalScale;
@@ -1164,6 +1170,96 @@ const Cursor = (() => {
     });
     window.addEventListener('mouseleave', () => dot.classList.add('cursor-dot--hidden'));
     window.addEventListener('mouseenter', () => dot.classList.remove('cursor-dot--hidden'));
+  }
+
+  return { init };
+})();
+
+/* --------------------------------------------------------------------------
+   Magnetic
+   -----------------------------------------------------------------------
+   Extends the wave's own "things lean toward the pointer" language to the
+   rest of the interface: the mute/theme toggles, the social-link icons, and
+   the crossfader's own "artist"/"booking" labels nudge a few px toward a
+   nearby cursor instead of sitting inert until directly hovered. Desktop/
+   fine-pointer only, same gate as Cursor — there's no "nearby" on a
+   touchscreen. Deliberately does NOT include #crossfader-input itself: a
+   magnetic pull on the element currently being dragged would fight its own
+   hit-testing frame to frame (the pointer moves, the element chases it,
+   which changes the very distance the pull is computed from). Pointer-only
+   by design: a keyboard-focused element must never carry a stale
+   mouse-driven offset, so focusin explicitly resets it (this is also why
+   the pull itself is plain CSS transform + transition rather than a JS
+   spring loop like the wave's — a keyframe-free transition is trivial to
+   snap back to zero).
+   -------------------------------------------------------------------------- */
+const Magnetic = (() => {
+  const MAGNETIC_RADIUS = 90; // px from element center where the pull begins
+  const MAGNETIC_STRENGTH = 0.35; // fraction of offset applied at zero distance
+  const MAGNETIC_MAX_OFFSET = 14; // px cap — a nudge, not a jump
+  const REST_TRANSFORM = 'none';
+
+  let elements = [];
+  let mouseX = -9999;
+  let mouseY = -9999;
+  let rafPending = false;
+
+  function isEligible(el) {
+    // Skip anything sitting inside the still-inert deck-b-panel (mix below
+    // the reveal threshold, see main.js's applyMix()) — inert already
+    // blocks pointer/keyboard interaction with it, so a magnetic nudge
+    // there would be pulling something the visitor can't actually reach yet.
+    return !el.closest('[inert]');
+  }
+
+  function applyPull() {
+    rafPending = false;
+    for (const el of elements) {
+      if (!isEligible(el)) {
+        el.style.transform = REST_TRANSFORM;
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      const dx = mouseX - (rect.left + rect.width / 2);
+      const dy = mouseY - (rect.top + rect.height / 2);
+      const dist = Math.hypot(dx, dy);
+      if (dist < MAGNETIC_RADIUS) {
+        const falloff = 1 - dist / MAGNETIC_RADIUS;
+        const pull = falloff * falloff * MAGNETIC_STRENGTH; // quadratic, echoes Wave's pointer falloff
+        const ox = Math.max(-MAGNETIC_MAX_OFFSET, Math.min(MAGNETIC_MAX_OFFSET, dx * pull));
+        const oy = Math.max(-MAGNETIC_MAX_OFFSET, Math.min(MAGNETIC_MAX_OFFSET, dy * pull));
+        el.style.transform = `translate(${ox.toFixed(1)}px, ${oy.toFixed(1)}px)`;
+      } else {
+        el.style.transform = REST_TRANSFORM;
+      }
+    }
+  }
+
+  function onMouseMove(e) {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(applyPull);
+    }
+  }
+
+  function init() {
+    if (mobileMode) return;
+    elements = Array.from(document.querySelectorAll('[data-magnetic]'));
+    if (!elements.length) return;
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseleave', () => {
+      elements.forEach((el) => (el.style.transform = REST_TRANSFORM));
+    });
+    // Pointer pull is a pointer-only enhancement — keyboard Tab must land
+    // on the element at its natural rest position, under its normal
+    // :focus-visible ring, never mid-nudge from a stale mousemove.
+    window.addEventListener('focusin', (e) => {
+      const el = e.target && e.target.closest && e.target.closest('[data-magnetic]');
+      if (el) el.style.transform = REST_TRANSFORM;
+    });
   }
 
   return { init };
@@ -1294,27 +1390,6 @@ const Cursor = (() => {
     applyMix(Number(crossfaderInput.value) / 100);
   });
 
-  // The entrance cascade's `rise-in` CSS animation uses fill-mode:forwards
-  // so its final frame (opacity:1, transform:translateY(0)) holds
-  // indefinitely — but a *held* CSS animation keeps overriding the same
-  // property on that element even after it's visually finished, at a
-  // higher cascade priority than any inline style JS sets afterward. That
-  // silently defeated Magnetic's `el.style.transform` on .nav-item/
-  // .mute-toggle (both entrance-animated) until this: once the animation
-  // genuinely ends, release it (clearing `animation` inline removes its
-  // hold on the property) and bake its final frame in as plain inline
-  // styles, so later JS-driven transforms apply normally. One delegated
-  // listener since several elements share the same rise-in keyframe.
-  document.addEventListener('animationend', (e) => {
-    if (e.animationName !== 'rise-in') return;
-    e.target.style.animation = 'none';
-    e.target.style.opacity = '1';
-    // 'none', not '' — see REST_TRANSFORM's comment in Magnetic: some of
-    // these elements (.nav-item, .mute-toggle) carry an unconditional base
-    // transform:translateY(16px) rule that '' would fall straight back to.
-    e.target.style.transform = 'none';
-  });
-
   muteToggle.addEventListener('click', () => {
     const muted = AudioEngine.toggleMute();
     muteToggle.setAttribute('aria-pressed', String(muted));
@@ -1406,6 +1481,15 @@ const Cursor = (() => {
     },
     get mix() {
       return mix;
+    },
+    get pointerCount() {
+      return Wave.pointerCount;
+    },
+    get scratchEnergy() {
+      return Wave.scratchEnergy;
+    },
+    get raveActive() {
+      return Wave.raveActive;
     },
   };
 
