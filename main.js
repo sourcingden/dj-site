@@ -346,6 +346,19 @@ const AudioEngine = (() => {
     play();
   }
 
+  // iOS in particular can interrupt/suspend an already-unlocked
+  // AudioContext during backgrounding — independent of the rAF loop
+  // stop/start on visibilitychange (main.js's bottom IIFE), and with no
+  // event of its own to say so. Called from that same visibilitychange
+  // handler on returning to the foreground, purely as a "if it's stuck,
+  // try again" nudge — a no-op fire-and-forget when there's nothing to
+  // resume (never started, or already running).
+  function resumeIfSuspended() {
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  }
+
   function toggleMute() {
     muted = !muted;
     if (gainNode && ctx) {
@@ -408,6 +421,7 @@ const AudioEngine = (() => {
     unlock,
     preload,
     start,
+    resumeIfSuspended,
     toggleMute,
     setMix,
     update,
@@ -479,6 +493,9 @@ const Wave = (() => {
   let lastGlobalScale = 1;
   let paused = false;
   let dissolveStartTs = null;
+  // Wall-clock (Date.now(), not the rAF `t` clock) backup for the transient
+  // check below — see draw()'s STUCK_TRANSIENT_CEILING_MS use of this.
+  let dissolveWallStartMs = null;
   let frozenPoints = [];
   let particles = [];
   const DISSOLVE_DURATION_S = 0.7;
@@ -493,8 +510,19 @@ const Wave = (() => {
   // side.
   let assembling = false;
   let assembleStartTs = null;
+  let assembleWallStartMs = null; // see dissolveWallStartMs's own comment
   let assembleTargetPoints = [];
   const ASSEMBLE_DURATION_S = 0.8;
+
+  // Last-resort safety valve for both transient states above: their normal
+  // "< DURATION" checks use the rAF `t` clock, which self-heals correctly
+  // even across a huge gap (a long-backgrounded tab's first frame back
+  // computes a huge elapsed value, correctly exceeds DURATION, falls
+  // through to live drawing on its own). This wall-clock backup exists for
+  // whatever *isn't* that case — any clock discontinuity that isn't just
+  // "a big but valid elapsed time" — so a transient state can never survive
+  // more than a few seconds of genuine real time no matter what.
+  const STUCK_TRANSIENT_CEILING_MS = 5000;
 
   const color = { fg: '#f2ede4', accent: '#c97a3d', selection: '#ff2d78' };
 
@@ -601,7 +629,14 @@ const Wave = (() => {
     for (let i = 0; i <= pointCount; i++) {
       const u = i / pointCount;
       const x = u * width;
-      const y = midY + (displacement(u, t, bands, phaseShift, ampScale) + springY[i]) * globalScale;
+      // (springY[i] || 0): springY is sized to pointCount+1 by
+      // ensureSpringArrays() (called from resize(), which init() always
+      // runs before anything else can call this) — should never actually
+      // be out of sync, but if it ever is on some real device's init-order
+      // edge case, an `undefined` here would silently turn the whole sum
+      // into NaN, and Canvas just no-ops non-finite coordinates — the line
+      // vanishes with no error at all. Cheap enough to guard unconditionally.
+      const y = midY + (displacement(u, t, bands, phaseShift, ampScale) + (springY[i] || 0)) * globalScale;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -618,7 +653,7 @@ const Wave = (() => {
       const u = i / pointCount;
       pts[i] = {
         x: u * width,
-        y: midY + (displacement(u, t, bands, 0, 1) + springY[i]) * globalScale,
+        y: midY + (displacement(u, t, bands, 0, 1) + (springY[i] || 0)) * globalScale,
       };
     }
     return pts;
@@ -799,9 +834,16 @@ const Wave = (() => {
         }
       }
 
-      const accel = SPRING_K * (target - springY[i]) - SPRING_C * springVY[i];
-      springVY[i] += accel * dt;
-      springY[i] += springVY[i] * dt;
+      // Guard against an out-of-sync springY/springVY the same way
+      // tracePath/capturePoints do (see their own comment) — the spring
+      // integrator writes back into these arrays every frame, so an
+      // undefined here wouldn't just be transient: it'd turn to NaN once
+      // and then stay NaN forever, since NaN + anything is still NaN.
+      const curY = springY[i] || 0;
+      const curVY = springVY[i] || 0;
+      const accel = SPRING_K * (target - curY) - SPRING_C * curVY;
+      springVY[i] = curVY + accel * dt;
+      springY[i] = curY + springVY[i] * dt;
     }
   }
 
@@ -1066,6 +1108,7 @@ const Wave = (() => {
     raveActive = false;
     raveFlash = false;
     frozenPoints = capturePoints(lastT, lastBands, lastGlobalScale);
+    dissolveWallStartMs = Date.now();
     if (prefersReducedMotion()) {
       // Skip the burst entirely — jump straight to the dormant state next
       // frame — rather than still playing a ~700ms transition.
@@ -1083,6 +1126,7 @@ const Wave = (() => {
   function beginAssemble(nowTs, targetPoints) {
     assembling = true;
     assembleStartTs = nowTs;
+    assembleWallStartMs = Date.now();
     assembleTargetPoints = targetPoints;
     spawnAssembleParticles(targetPoints);
   }
@@ -1126,7 +1170,12 @@ const Wave = (() => {
 
     if (paused) {
       const dissolveElapsed = dissolveStartTs !== null ? (t - dissolveStartTs) / 1000 : Infinity;
-      const dissolveActive = dissolveElapsed < DISSOLVE_DURATION_S;
+      // The wall-clock term is the STUCK_TRANSIENT_CEILING_MS safety valve
+      // (see its own comment) — belt-and-suspenders alongside the `t`-based
+      // check, which already self-heals correctly on its own for an
+      // ordinary large time gap.
+      const dissolveStuck = dissolveWallStartMs !== null && Date.now() - dissolveWallStartMs > STUCK_TRANSIENT_CEILING_MS;
+      const dissolveActive = dissolveElapsed < DISSOLVE_DURATION_S && !dissolveStuck;
 
       if (dissolveActive) {
         const fade = 1 - dissolveElapsed / DISSOLVE_DURATION_S;
@@ -1161,7 +1210,10 @@ const Wave = (() => {
 
     if (assembling) {
       const assembleElapsed = (t - assembleStartTs) / 1000;
-      if (assembleElapsed < ASSEMBLE_DURATION_S) {
+      // Same STUCK_TRANSIENT_CEILING_MS safety valve as the dissolve branch
+      // above.
+      const assembleStuck = assembleWallStartMs !== null && Date.now() - assembleWallStartMs > STUCK_TRANSIENT_CEILING_MS;
+      if (assembleElapsed < ASSEMBLE_DURATION_S && !assembleStuck) {
         // The line solidifies (fades 0->1) at the same rate the particles
         // converge onto it — the reverse of the dissolve's frozen line
         // fading 1->0 while its particles scatter outward.
@@ -1518,7 +1570,17 @@ const Magnetic = (() => {
     // appear at all, particles converging into the line rather than it
     // just snapping into existence. No-ops under reduced motion (see
     // Wave.wake()'s own check) — the very next frame just starts live.
-    Wave.wake(wakeStartTs);
+    // Own try/catch, deliberately separate from AudioEngine.start() below:
+    // this function is async and never awaited by its click/touchstart
+    // caller, so an uncaught throw here would silently reject the whole
+    // function's promise and skip everything after it — including
+    // starting the actual music, which matters far more than the visual
+    // flourish does. The two must be able to fail independently.
+    try {
+      Wave.wake(wakeStartTs);
+    } catch (err) {
+      console.error('[diskevich] Wave.wake() threw — audio still starts below.', err);
+    }
     // Reduced motion (Phase 6): leave the sleeping state, but don't start
     // audio — nothing here should autoplay for these visitors.
     if (!prefersReducedMotion()) {
@@ -1702,6 +1764,7 @@ const Magnetic = (() => {
   let mobileFrameCounter = 0;
   let rafId = null;
   let lastSleepDrawTs = 0;
+  let waveDrawErrorLogged = false; // see the try/catch around Wave.draw() in frameLoop
   // Barely-moving content doesn't need 60fps: while sleeping (pre-
   // interaction), redraw only a few times a second instead of every frame.
   // Genuinely cheaper (near-zero CPU during however long the page sits
@@ -1741,7 +1804,21 @@ const Magnetic = (() => {
     } else {
       bands = AudioEngine.update();
     }
-    Wave.draw(ts, dt / 1000, bands, wakeProgress, mix, awake);
+    // A throw here must never be allowed to blank the canvas forever: the
+    // next requestAnimationFrame(frameLoop) call above is already
+    // scheduled before this runs, so an uncaught exception on some
+    // real-device edge case would otherwise repeat at the same point every
+    // single frame — clearRect() runs, nothing after it does, with zero
+    // visible sign to the visitor that anything's wrong. One bad frame
+    // (logged, so it's diagnosable) beats a permanently invisible wave.
+    try {
+      Wave.draw(ts, dt / 1000, bands, wakeProgress, mix, awake);
+    } catch (err) {
+      if (!waveDrawErrorLogged) {
+        waveDrawErrorLogged = true;
+        console.error('[diskevich] Wave.draw() threw — recovering on next frame.', err);
+      }
+    }
   }
 
   // Phase 6: stop the loop entirely while the tab is hidden — no canvas
@@ -1760,8 +1837,18 @@ const Magnetic = (() => {
     rafId = null;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopLoop();
-    else startLoop();
+    if (document.hidden) {
+      stopLoop();
+    } else {
+      startLoop();
+      // iOS can suspend an already-unlocked AudioContext during
+      // backgrounding with no event of its own to say so — see
+      // AudioEngine.resumeIfSuspended()'s own comment. No-op if the
+      // experience never started or audio's already running fine.
+      if (entryStarted) {
+        AudioEngine.resumeIfSuspended();
+      }
+    }
   });
   startLoop();
 })();
