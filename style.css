@@ -693,17 +693,70 @@ body[data-state='awake'] .fader-hint {
   text-align: center;
   padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
     calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
-  /* Each step fades/rises in on its own as it's scrolled to — see main.js's
-     MobileStory (an IntersectionObserver toggling --visible). Independent
-     of --mix, which only drives audio/wave here, not step reveal timing. */
-  opacity: 0;
-  transform: translateY(24px);
-  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
+  /* The step itself no longer fades as one flat block — see .reveal below,
+     which each step's actual content pieces carry individually, cascading
+     in one after another as the step is scrolled to (main.js's
+     IntersectionObserver toggles --visible; independent of --mix, which
+     only drives audio/wave here, not this). */
 }
 
-.story-step--visible {
+/* One thing materializing into focus at a time, not a block dissolving in:
+   starts blurred, slightly small and dropped, and resolves to sharp/full
+   size/settled as its step becomes current. Reads closer to a lens racking
+   into focus than a fade — matches the "reveal" language ".fader-hint"/
+   the crossfader panel already use elsewhere, just built for a one-shot
+   scroll-triggered moment instead of a continuously-scrubbed one. Applied
+   per-element (not once per .story-step) so a step with more than one
+   piece of content — the hero's name + tap hint, a sentence split into two
+   lines, two tour dates, the social icons before the CTA — reveals them in
+   sequence via .reveal--d1/--d2 below, not all at once. */
+.reveal {
+  opacity: 0;
+  transform: translateY(22px) scale(0.96);
+  filter: blur(6px);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo),
+    filter var(--dur-medium) var(--ease-out-expo);
+}
+
+.story-step--visible .reveal {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+.reveal--d1 {
+  transition-delay: 110ms;
+}
+
+.reveal--d2 {
+  transition-delay: 220ms;
+}
+
+/* Split-sentence steps (tagline/bio): each .reveal span is meant to read
+   as its own line, materializing a beat after the one before it — block
+   makes that stacking happen regardless of the <p>'s own inline flow. */
+.story-tagline .reveal,
+.story-bio .reveal {
+  display: block;
+}
+
+/* .social-link and .story-tap-hint each already declare their own
+   `transition` (hover color, border-color) elsewhere in this file. Two
+   separate `transition` shorthand declarations on the same element don't
+   merge — whichever rule comes later in the cascade wins outright for
+   every sub-property, silently dropping the other's. These two-class
+   selectors outrank both single-class rules on specificity alone
+   (0,2,0 beats 0,1,0), so they're the actual final word regardless of
+   where in the file they sit — restating the full combined list here once
+   rather than leaving that to source-order accident. */
+.social-link.reveal {
+  transition: color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo),
+    transform var(--dur-medium) var(--ease-out-expo), filter var(--dur-medium) var(--ease-out-expo);
+}
+
+.story-tap-hint.reveal {
+  transition: opacity var(--dur-medium) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo),
+    transform var(--dur-medium) var(--ease-out-expo), filter var(--dur-medium) var(--ease-out-expo);
 }
 
 /* Soft radial scrim behind each step's text — keeps copy legible over the
@@ -830,7 +883,25 @@ body[data-state='awake'] .story-scroll-hint {
   letter-spacing: 0.1em;
   text-transform: lowercase;
   text-decoration: none;
+  /* Paused until .story-step--visible .story-cta (below) sets it running —
+     the CTA also carries .reveal (materializing in like everything else
+     in the mobile story), and a running CSS animation takes over whatever
+     property it touches outright, pre-empting a `transition` on that same
+     property. Left running from the start, the bounce's own keyframes
+     would fight .reveal's transform transition the instant this step
+     becomes visible, and the CTA would just snap into its bounce cycle
+     instead of visibly rising into place first. animation-delay here is
+     timed to start right as .reveal--d2's transition (220ms delay +
+     --dur-medium) actually finishes, so the bounce picks up cleanly from
+     the exact resting transform the reveal already settled into — no
+     fighting, no visible seam between the two. */
   animation: story-cta-bounce 1.8s ease-in-out infinite;
+  animation-play-state: paused;
+  animation-delay: calc(var(--dur-medium) + 220ms); /* keep in sync with .reveal--d2's transition-delay */
+}
+
+.story-step--visible .story-cta {
+  animation-play-state: running;
 }
 
 .story-cta-icon {
