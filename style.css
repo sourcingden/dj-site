@@ -615,6 +615,224 @@ body[data-state='awake'] .fader-hint {
   opacity: 0;
 }
 
+/* ---- Mobile story ----
+   The crossfader is a desktop metaphor: a drag gesture judged by eye
+   against a wide horizontal track, with #deck-b-panel packing wordmark +
+   tagline + bio + dates + socials into one screen to share it. That's
+   legible on a monitor at arm's length; on an actual phone it reads as
+   "there's nothing here" — confirmed the hard way, not guessed. Below this
+   breakpoint, #mobile-story replaces both entirely: one idea per full-
+   screen, scroll-snapped step, sized to actually be read. This mirrors
+   main.js's own `mobileMode` boundary exactly (width<=768 OR coarse
+   pointer) so the JS and CSS split points can never disagree about which
+   presentation is live. */
+#mobile-story {
+  display: none;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  .crossfader,
+  #deck-b-panel {
+    display: none;
+  }
+
+  #mobile-story {
+    display: block;
+    position: relative;
+    z-index: 2;
+    height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #mobile-story {
+    /* Snapping is a motion-adjacent affordance (it seizes control of the
+       scroll gesture to finish it for you) — a reduced-motion visitor gets
+       plain, self-paced scroll instead, same spirit as every --dur-*
+       token in this file zeroing out rather than the animation just
+       running slower. */
+    scroll-snap-type: none;
+  }
+}
+
+.story-step {
+  position: relative;
+  min-height: 100dvh;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  text-align: center;
+  padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
+    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
+  /* Each step fades/rises in on its own as it's scrolled to — see main.js's
+     MobileStory (an IntersectionObserver toggling --visible). Independent
+     of --mix, which only drives audio/wave here, not step reveal timing. */
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
+}
+
+.story-step--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Soft radial scrim behind each step's text, same idea as
+   .deck-b-panel::before — keeps copy legible over the wave without a hard
+   modal box. Always present (not tied to --mix here; mobile has no
+   continuous "how much booking is showing" opacity to hook into the way
+   the desktop panel does — the wave itself already dims via the same
+   scroll-driven `mix` main.js feeds into Wave.draw()). */
+.story-step::before {
+  content: '';
+  position: absolute;
+  inset: -10%;
+  z-index: -1;
+  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.story-wordmark {
+  font-size: clamp(2.75rem, 15vw, 4rem);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  /* Same cut-through trick as the desktop .artist-name — see that rule's
+     own comment for why this specifically needs a near-black backdrop. */
+  mix-blend-mode: difference;
+}
+
+:root[data-theme='light'] .story-wordmark {
+  mix-blend-mode: normal;
+}
+
+.story-tap-hint {
+  font-family: var(--font-text);
+  font-size: var(--fs-body);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: var(--color-fg);
+  background: transparent;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: var(--space-sm) var(--space-lg);
+  min-height: var(--tap-min);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
+}
+
+.story-tap-hint:hover,
+.story-tap-hint:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.story-scroll-hint {
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.15em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-medium) var(--ease-out-expo);
+}
+
+/* First tap (main.js's MobileStory, mirrors the crossfader's
+   beginCrossfading()) flips body to 'awake': the tap button's job is done,
+   hand off to the scroll hint — same swap the desktop fader-hint does. */
+body[data-state='awake'] .story-tap-hint {
+  display: none;
+}
+
+body[data-state='awake'] .story-scroll-hint {
+  opacity: 0.8;
+}
+
+.story-tagline {
+  font-size: clamp(1.05rem, 4.5vw, 1.3rem);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--color-fg-muted);
+  max-width: 26ch;
+}
+
+.story-bio {
+  font-family: var(--font-text);
+  font-size: clamp(1.05rem, 4vw, 1.2rem);
+  line-height: 1.7;
+  color: var(--color-fg-muted);
+  max-width: 30ch;
+}
+
+.story-dates {
+  font-size: clamp(1.1rem, 4vw, 1.3rem);
+}
+
+.story-dates .date-day,
+.story-dates .date-venue {
+  font-size: inherit;
+}
+
+.story-step--finale {
+  gap: var(--space-lg);
+}
+
+/* The payoff at the end of the scroll: a large, solid-filled, animated
+   button — deliberately not just another outlined icon+label like
+   .social-link above it. Everything before this step has been quiet and
+   subtle on purpose; this one thing is allowed to be loud. */
+.story-cta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 56px;
+  padding: var(--space-sm) calc(var(--space-lg) * 1.2);
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-family: var(--font-text);
+  font-size: var(--fs-nav);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  text-decoration: none;
+  animation: story-cta-bounce 1.8s ease-in-out infinite;
+}
+
+.story-cta-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+}
+
+@keyframes story-cta-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .story-cta {
+    /* A state change instead of motion, same precedent as the rave-burst
+       flash and the dissolve-skip elsewhere in this file: reduced motion
+       still gets an unmistakably emphasized CTA, just not a looping bounce. */
+    animation: none;
+    box-shadow: 0 0 0 4px var(--color-accent-dim);
+  }
+}
+
 /* ---- Mute toggle ---- */
 .mute-toggle {
   position: fixed;

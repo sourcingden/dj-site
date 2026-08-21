@@ -1306,7 +1306,7 @@ const Magnetic = (() => {
   // active at page load, --dur-wake reads as 0ms (per the Phase 0 token
   // override) — harmless on its own since the ramp is skipped entirely
   // whenever reduced motion is active at interaction time (see
-  // beginCrossfading below), but this keeps the captured constant itself
+  // beginExperience below), but this keeps the captured constant itself
   // safe to use (no divide-by-zero) for the edge case of someone switching
   // the OS setting off between load and first interaction.
   const WAKE_DURATION_MS = Math.max(
@@ -1316,24 +1316,27 @@ const Magnetic = (() => {
   let wakeStartTs = null;
 
   /* --------------------------------------------------------------------
-     Crossfader
+     Crossfader / Mobile story — shared mix engine
      -----------------------------------------------------------------
-     Replaces Phase 0's tap-to-enter gate and the old bio/dates/booking
-     nav+overlays wholesale: one range input is now the entire site's
-     navigation. mix runs 0 (full artist: wave at full amplitude/volume,
-     deck-b-panel invisible) to 1 (full booking: deck-b-panel fully
-     readable, wave a dim backdrop, audio silent) — see
-     AudioEngine.setMix() and Wave.draw()'s BUSINESS_SCALE blend for the
-     two halves this one number drives. It also doubles as the entry
-     gesture: the *first* pointerdown or keydown on it is what unlocks
-     audio and kicks off the same wake-unfurl ramp tap-to-enter used to
-     trigger — see AudioEngine.unlock()'s own comment for why that call has
-     to be synchronous, inside the raw gesture handler, with no await
-     before it (iOS Safari's gesture-chaining requirement).
+     One continuous mix, 0 (full artist) to 1 (full booking), drives both
+     AudioEngine's gain and Wave's amplitude — see AudioEngine.setMix() and
+     Wave.draw()'s BUSINESS_SCALE blend. Desktop feeds it from the
+     crossfader's drag position (below); the mobile story (further below)
+     feeds the exact same function from scroll progress instead — the
+     underlying blend is identical, only the input gesture differs per
+     breakpoint. Which one a visitor can actually reach is entirely CSS's
+     job (style.css's mobile-story media query mirrors main.js's own
+     mobileMode boundary) — both sets of listeners stay wired unconditionally
+     here, since whichever container is display:none simply never receives
+     real events, no runtime branching needed.
+     applyMix() also doubles as the entry gesture's payload: unlocking
+     audio and starting the wake-unfurl ramp — see beginExperience(), used
+     by both the crossfader's first pointerdown/keydown and the mobile
+     story's tap-hint/first touch.
      -------------------------------------------------------------------- */
   const REVEAL_THRESHOLD = 0.08; // below this, deck-b-panel is inert/hidden from AT — matches where it's visually still unreadable
   let mix = 0;
-  let crossfaderStarted = false;
+  let entryStarted = false;
 
   function applyMix(value) {
     mix = value;
@@ -1342,7 +1345,9 @@ const Magnetic = (() => {
     // styles, no discrete thresholds for *appearance*. inert/aria-hidden
     // are the one place a threshold is unavoidable: screen readers have no
     // concept of "38% visible", so they get the panel exactly when it's
-    // become meaningfully legible to sighted visitors.
+    // become meaningfully legible to sighted visitors. (On mobile
+    // #deck-b-panel is display:none regardless — this still runs
+    // harmlessly, just with no visible effect there.)
     html.style.setProperty('--mix', mix.toFixed(4));
     const revealed = mix >= REVEAL_THRESHOLD;
     if (revealed) {
@@ -1363,9 +1368,9 @@ const Magnetic = (() => {
   }
   applyMix(0); // sync --mix/AudioEngine with the range input's own default value
 
-  async function beginCrossfading() {
-    if (crossfaderStarted) return;
-    crossfaderStarted = true;
+  async function beginExperience() {
+    if (entryStarted) return;
+    entryStarted = true;
     // Must be the very first thing that happens, synchronously, before any
     // await — see AudioEngine.unlock()'s own comment for why.
     if (!prefersReducedMotion()) {
@@ -1382,13 +1387,70 @@ const Magnetic = (() => {
 
   // pointerdown covers mouse drag and touch; keydown covers a keyboard user
   // tabbing to the fader and pressing an arrow key without ever pointing at
-  // it. Both are idempotent via crossfaderStarted, so whichever fires first
+  // it. Both are idempotent via entryStarted, so whichever fires first
   // wins and the other is a no-op.
-  crossfaderInput.addEventListener('pointerdown', beginCrossfading);
-  crossfaderInput.addEventListener('keydown', beginCrossfading);
+  crossfaderInput.addEventListener('pointerdown', beginExperience);
+  crossfaderInput.addEventListener('keydown', beginExperience);
   crossfaderInput.addEventListener('input', () => {
     applyMix(Number(crossfaderInput.value) / 100);
   });
+
+  /* --------------------------------------------------------------------
+     Mobile story
+     -----------------------------------------------------------------
+     mix here tracks scroll progress through #mobile-story (0 at the hero,
+     1 at the finale) instead of a drag position, feeding the exact same
+     applyMix() the crossfader uses above. The tap-hint button is the entry
+     gesture (mirrors the crossfader's pointerdown/keydown); a first
+     touchstart on the story container itself is a fallback for a visitor
+     who scrolls straight past it without tapping — both call the same
+     idempotent beginExperience().
+     -------------------------------------------------------------------- */
+  const mobileStory = document.getElementById('mobile-story');
+  const storyTapHint = document.getElementById('story-tap-hint');
+  const storySteps = Array.from(document.querySelectorAll('.story-step'));
+
+  storyTapHint.addEventListener('click', beginExperience);
+  mobileStory.addEventListener('touchstart', beginExperience, { passive: true, once: true });
+
+  let storyScrollPending = false;
+  function onStoryScroll() {
+    // rAF-throttled like the frame loop below — 'scroll' can fire far more
+    // often than once per frame on some devices, and applyMix()'s DOM
+    // writes (a custom property + attribute toggles) don't need to run
+    // more often than the screen can actually redraw.
+    if (storyScrollPending) return;
+    storyScrollPending = true;
+    requestAnimationFrame(() => {
+      storyScrollPending = false;
+      const scrollable = mobileStory.scrollHeight - mobileStory.clientHeight;
+      const progress = scrollable > 0 ? mobileStory.scrollTop / scrollable : 0;
+      applyMix(Math.min(1, Math.max(0, progress)));
+    });
+  }
+  mobileStory.addEventListener('scroll', onStoryScroll, { passive: true });
+
+  // Per-step entrance: each .story-step fades/rises in as it's scrolled to,
+  // independent of the continuous mix value above (which only drives
+  // audio/wave, not step reveal timing) — see .story-step--visible in
+  // style.css. root: mobileStory, not the viewport, since the story
+  // scrolls inside its own container rather than the page.
+  if ('IntersectionObserver' in window) {
+    const stepObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          entry.target.classList.toggle('story-step--visible', entry.isIntersecting);
+        });
+      },
+      { root: mobileStory, threshold: 0.5 }
+    );
+    storySteps.forEach((step) => stepObserver.observe(step));
+  } else {
+    // No IntersectionObserver (very old browser): show everything rather
+    // than leaving every step permanently at opacity 0 with no way to
+    // reveal it.
+    storySteps.forEach((step) => step.classList.add('story-step--visible'));
+  }
 
   muteToggle.addEventListener('click', () => {
     const muted = AudioEngine.toggleMute();
