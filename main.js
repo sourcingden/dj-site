@@ -483,6 +483,19 @@ const Wave = (() => {
   let particles = [];
   const DISSOLVE_DURATION_S = 0.7;
 
+  // Assemble (reverse of dissolve): the wave never just sits there as a
+  // static line while dormant — see the `!awake`/settled-dissolve branches
+  // in draw(), which draw nothing at all in that state. Starting playback
+  // (the very first wake, or resuming after mute) instead earns a moment
+  // of particles converging into the line, which then fades in alongside
+  // them, before normal live drawing takes over. See wake()/resume() for
+  // the two trigger points and spawnAssembleParticles() for the particle
+  // side.
+  let assembling = false;
+  let assembleStartTs = null;
+  let assembleTargetPoints = [];
+  const ASSEMBLE_DURATION_S = 0.8;
+
   const color = { fg: '#f2ede4', accent: '#c97a3d', selection: '#ff2d78' };
 
   function readColorTokens() {
@@ -655,6 +668,56 @@ const Wave = (() => {
       ctx.beginPath();
       ctx.fillStyle = hexToRgba(p.color, fade * 0.9);
       ctx.arc(p.x, p.y, Math.max(0.2, p.size * fade), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ---- Assemble: the reverse of the dissolve above ----
+  // Same particle count per target point, but a deterministic ease-in
+  // toward a fixed target instead of velocity/drag physics — dissolve's
+  // outward burst wants organic, unpredictable drift; coming together
+  // reads better as a clean, confident convergence. Each particle stores
+  // its own immutable startX/startY (where it appears) and targetX/targetY
+  // (the point on the line it's heading for); updateAndDrawAssembleParticles
+  // re-lerps position from those every frame rather than integrating
+  // velocity, so there's no drift to accumulate or reset.
+  function spawnAssembleParticles(targetPoints) {
+    particles = [];
+    for (let i = 0; i < targetPoints.length; i++) {
+      const p = targetPoints[i];
+      for (let k = 0; k < PARTICLES_PER_POINT; k++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 30 + Math.random() * 200;
+        particles.push({
+          startX: p.x + Math.cos(angle) * dist,
+          startY: p.y + Math.sin(angle) * dist - 20, // slight downward settle, mirroring the dissolve's upward lift
+          targetX: p.x,
+          targetY: p.y,
+          size: 1 + Math.random() * 2.4,
+          life: 0,
+          maxLife: ASSEMBLE_DURATION_S * (0.7 + Math.random() * 0.3),
+          color: Math.random() < 0.6 ? color.fg : color.accent,
+        });
+      }
+    }
+  }
+
+  function updateAndDrawAssembleParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life += dt;
+      const progress = Math.min(1, p.life / p.maxLife);
+      if (progress >= 1) {
+        particles.splice(i, 1);
+        continue;
+      }
+      const eased = easeOutExpo(progress);
+      const x = p.startX + (p.targetX - p.startX) * eased;
+      const y = p.startY + (p.targetY - p.startY) * eased;
+      const fade = 1 - progress; // fades out as it merges into the now-solidifying line
+      ctx.beginPath();
+      ctx.fillStyle = hexToRgba(p.color, fade * 0.9);
+      ctx.arc(x, y, Math.max(0.2, p.size * fade), 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1014,14 +1077,41 @@ const Wave = (() => {
     }
   }
 
-  function resume() {
+  // Shared by wake() and resume() below — spawns the converging particles
+  // and hands their target shape to draw()'s `assembling` branch, which
+  // fades the line itself in alongside them.
+  function beginAssemble(nowTs, targetPoints) {
+    assembling = true;
+    assembleStartTs = nowTs;
+    assembleTargetPoints = targetPoints;
+    spawnAssembleParticles(targetPoints);
+  }
+
+  // First-ever wake (main.js's beginExperience(), on the crossfader's or
+  // mobile story's first interaction): the wave has never been drawn
+  // before this, so there's no "last shape" to reassemble into — capture
+  // a fresh target at rest (silent bands, SLEEP_SCALE) instead of reusing
+  // frozenPoints the way resume() does.
+  function wake(nowTs) {
+    if (prefersReducedMotion()) return; // no assemble flourish — draw() just starts live next frame
+    beginAssemble(nowTs, capturePoints(0, { bass: 0, mid: 0, high: 0 }, SLEEP_SCALE));
+  }
+
+  function resume(nowTs) {
     paused = false;
+    // Reassemble into the exact shape it dissolved from when there is one
+    // (the normal case — mute always freezes a shape first) — a true
+    // reverse of the dissolve, not just a generic "some wave shape".
+    const targets = frozenPoints.length ? frozenPoints : capturePoints(lastT, lastBands, SLEEP_SCALE);
     particles = [];
     frozenPoints = [];
     dissolveStartTs = null;
+    if (!prefersReducedMotion()) {
+      beginAssemble(nowTs, targets);
+    }
   }
 
-  function draw(t, dt, bands, wakeProgress, mix = 0) {
+  function draw(t, dt, bands, wakeProgress, mix = 0, awake = true) {
     // Reduced motion (Phase 6): freeze the time input to the shape math so
     // the idle-noise breathing and audio ripples stop animating on their
     // own — the wave becomes a static (but still organically-shaped, not a
@@ -1054,17 +1144,58 @@ const Wave = (() => {
 
       updateAndDrawParticles(dt);
 
+      // Settled: once the dissolve's actually finished, nothing more is
+      // drawn — no lingering idle line left sitting there. stepPhysics
+      // still runs so any pointer-spring offset decays cleanly instead of
+      // freezing mid-interaction; it just has nothing left to visibly
+      // affect until resume()'s assemble effect draws something again.
       if (!dissolveActive) {
-        // Settled: the same barely-moving idle presentation as the
-        // pre-interaction sleeping state — reads as "resting", not
-        // "broken/empty". Bands are ~0 anyway once actually muted (gain
-        // precedes the analyser), this just guarantees it regardless.
-        // stepPhysics keeps running so any pointer-spring offset decays
-        // cleanly rather than freezing mid-interaction.
         stepPhysics(effectiveT, bands, dt);
-        drawLayers(effectiveT, bands, SLEEP_SCALE, 0, false);
       }
 
+      lastT = effectiveT;
+      lastBands = bands;
+      lastGlobalScale = SLEEP_SCALE;
+      return;
+    }
+
+    if (assembling) {
+      const assembleElapsed = (t - assembleStartTs) / 1000;
+      if (assembleElapsed < ASSEMBLE_DURATION_S) {
+        // The line solidifies (fades 0->1) at the same rate the particles
+        // converge onto it — the reverse of the dissolve's frozen line
+        // fading 1->0 while its particles scatter outward.
+        const fade = assembleElapsed / ASSEMBLE_DURATION_S;
+        ctx.beginPath();
+        for (let i = 0; i < assembleTargetPoints.length; i++) {
+          const p = assembleTargetPoints[i];
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.strokeStyle = hexToRgba(color.fg, fade);
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+
+        updateAndDrawAssembleParticles(dt);
+
+        lastT = effectiveT;
+        lastBands = bands;
+        lastGlobalScale = SLEEP_SCALE;
+        return;
+      }
+      // Just finished this frame — clear the flag and fall straight into
+      // normal live drawing below instead of a blank frame in between.
+      assembling = false;
+      particles = [];
+    }
+
+    if (!awake) {
+      // Dormant: nothing drawn until the first interaction triggers
+      // wake()'s assemble effect above — no idle line sitting in the
+      // background before that either. stepPhysics still runs for the
+      // same reason as the settled-dissolve branch above.
+      stepPhysics(effectiveT, bands, dt);
       lastT = effectiveT;
       lastBands = bands;
       lastGlobalScale = SLEEP_SCALE;
@@ -1122,6 +1253,7 @@ const Wave = (() => {
     refreshColors: readColorTokens,
     pause,
     resume,
+    wake,
     // Test-only, zero runtime cost — mirrors the existing
     // window.diskevichDebug.mobileMode getter pattern.
     get pointerCount() {
@@ -1133,6 +1265,9 @@ const Wave = (() => {
     triggerRaveBurst,
     get raveActive() {
       return raveActive;
+    },
+    get assembling() {
+      return assembling;
     },
   };
 })();
@@ -1378,6 +1513,12 @@ const Magnetic = (() => {
     }
     body.dataset.state = 'awake';
     wakeStartTs = performance.now();
+    // Reverse-dissolve: the wave was drawing nothing at all up to this
+    // point (see Wave.draw()'s `!awake` branch) — this is what makes it
+    // appear at all, particles converging into the line rather than it
+    // just snapping into existence. No-ops under reduced motion (see
+    // Wave.wake()'s own check) — the very next frame just starts live.
+    Wave.wake(wakeStartTs);
     // Reduced motion (Phase 6): leave the sleeping state, but don't start
     // audio — nothing here should autoplay for these visitors.
     if (!prefersReducedMotion()) {
@@ -1458,13 +1599,15 @@ const Magnetic = (() => {
     body.dataset.muted = String(muted);
 
     // Mute doubles as pause for the wave, not just the speakers: freeze +
-    // dissolve into particles on mute, ease back in (reusing the same
-    // wake-unfurl ramp as the original wake) on unmute.
+    // dissolve into particles (then nothing) on mute; on unmute, Wave.resume()
+    // plays that dissolve in reverse — particles reassembling into the
+    // exact shape it dissolved from — before handing off to the same
+    // wake-unfurl amplitude ramp the original wake uses.
     if (muted) {
       Wave.pause(performance.now());
     } else {
-      Wave.resume();
       wakeStartTs = performance.now();
+      Wave.resume(wakeStartTs);
     }
   });
 
@@ -1598,7 +1741,7 @@ const Magnetic = (() => {
     } else {
       bands = AudioEngine.update();
     }
-    Wave.draw(ts, dt / 1000, bands, wakeProgress, mix);
+    Wave.draw(ts, dt / 1000, bands, wakeProgress, mix, awake);
   }
 
   // Phase 6: stop the loop entirely while the tab is hidden — no canvas
