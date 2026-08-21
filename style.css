@@ -26,7 +26,10 @@
   --color-bg: #0a0a0a;
   --color-bg-elevated: #111110;
   --color-fg: #f2ede4;
-  --color-fg-muted: #8a8378;
+  /* 8.78:1 against --color-bg (was 5.28:1) — still visibly a step down from
+     full --color-fg, but no longer faint enough to read as "barely there"
+     for body copy (tagline/bio/dates/labels all lean on this). */
+  --color-fg-muted: #b3ac9e;
   --color-accent: #c97a3d;
   --color-accent-soft: rgba(201, 122, 61, 0.35);
   --color-accent-dim: rgba(201, 122, 61, 0.12);
@@ -110,7 +113,9 @@
   --color-bg: #f2ede4;
   --color-bg-elevated: #e8e1d3;
   --color-fg: #0a0a0a;
-  --color-fg-muted: #5c544a;
+  /* 8.93:1 against --color-bg (was 6.38:1) — same reasoning as the dark
+     theme's --color-fg-muted, mirrored. */
+  --color-fg-muted: #453f36;
   --color-accent: #9c5522;
   --color-accent-soft: rgba(156, 85, 34, 0.35);
   --color-accent-dim: rgba(156, 85, 34, 0.12);
@@ -272,6 +277,32 @@ body.has-custom-cursor * {
     calc(max(var(--space-lg), var(--fader-zone)) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
 }
 
+/* Deck B's legibility scrim, deliberately living here rather than as a
+   pseudo-element on #deck-b-panel itself: #deck-b-panel's own opacity is
+   var(--mix) (see style.css further down / main.js's applyMix()), and a
+   child can't opt out of an ancestor's opacity — a scrim nested inside it
+   would be capped at the same faint 30-40% alpha as the text it's meant
+   to back, right at the mix range where someone's actually trying to
+   read. Living on .scene instead, its own opacity ramps to fully solid
+   by roughly mix=0.45 (`min(1, mix * 2.2)`) — well before the text panel
+   finishes its own fade-in at mix=1 — so whatever text is legible is
+   already sitting on a flat, opaque backdrop instead of both fading
+   together into mush. Fixed + full-viewport rather than shaped to the
+   panel's bounds: simpler, and correct either way since it's inert
+   (pointer-events: none) and z-index: -1 within .scene's own stacking
+   context keeps it under the panel/crossfader but still above the wave
+   canvas (.scene itself is z-index 2, above the canvas's z-index 1). */
+.scene::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--color-overlay-bg);
+  opacity: calc(min(1, var(--mix, 0) * 2.2));
+  pointer-events: none;
+  transition: opacity var(--dur-instant) linear;
+}
+
 .mark {
   display: flex;
   flex-direction: column;
@@ -408,15 +439,6 @@ body.has-custom-cursor * {
   .deck-b-panel .dates-list li {
     font-size: var(--fs-small);
   }
-}
-
-.deck-b-panel::before {
-  content: '';
-  position: absolute;
-  inset: -12% -8%;
-  z-index: -1;
-  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, transparent 70%);
-  pointer-events: none;
 }
 
 .bio-text {
@@ -684,18 +706,23 @@ body[data-state='awake'] .fader-hint {
   transform: translateY(0);
 }
 
-/* Soft radial scrim behind each step's text, same idea as
-   .deck-b-panel::before — keeps copy legible over the wave without a hard
-   modal box. Always present (not tied to --mix here; mobile has no
-   continuous "how much booking is showing" opacity to hook into the way
-   the desktop panel does — the wave itself already dims via the same
-   scroll-driven `mix` main.js feeds into Wave.draw()). */
+/* Soft radial scrim behind each step's text — keeps copy legible over the
+   wave without a hard modal box. Always at full strength (not tied to
+   --mix the way .scene::before is): a .story-step's own opacity is either
+   0 or 1 via .story-step--visible (main.js's IntersectionObserver), never
+   a fractional value it could get capped by, so there's no equivalent
+   "faint scrim on faint text" problem to solve here — the wave itself
+   still dims on its own via the same scroll-driven `mix` main.js feeds
+   into Wave.draw(). */
 .story-step::before {
   content: '';
   position: absolute;
-  inset: -10%;
+  inset: -6%;
   z-index: -1;
-  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, transparent 65%);
+  /* Same fix as .deck-b-panel::before above: solid out to 60%, feathering
+     only the empty margin, so the wave/grain never bleeds through behind
+     an actual line of text. */
+  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, var(--color-overlay-bg) 60%, transparent 100%);
   pointer-events: none;
 }
 
