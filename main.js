@@ -4,6 +4,12 @@
    Phase 0: skeleton wiring (tap-to-enter -> awake state).
    Phase 1: audio engine — AudioContext, AnalyserNode, bass/mid/high bands,
             mute, suspended-state handling, synthetic placeholder track.
+   Phase 8: audio-reactive accent layers, additive on top of the wave — see
+            the Spectrum and Orb modules, and the micro-VU pulse wired into
+            frameLoop() below. These are the site's first external JS
+            dependencies (vendor/, see vendor/README.md for what's vendored
+            and why), which is why this file is now loaded as an ES module
+            (index.html's <script type="module">) instead of a plain script.
 
    Crossfader: the tap-to-enter gate and the old bio/dates/booking
    nav+overlays are gone. A single range input (#crossfader-input) is now
@@ -13,6 +19,9 @@
    bootstrapping IIFE for the wiring, and AudioEngine.setMix() / Wave.draw()
    for how each side reads it.
    ========================================================================== */
+
+import AudioMotionAnalyzer from './vendor/audioMotion-analyzer.js';
+import * as THREE from './vendor/three.module.js';
 
 /* --------------------------------------------------------------------------
    Shared mobile detection
@@ -436,6 +445,15 @@ const AudioEngine = (() => {
     },
     get isSynthetic() {
       return usingSyntheticLoop;
+    },
+    // Phase 8: tap point for Spectrum (main.js, below) to patch
+    // audioMotion-analyzer into the existing graph. gainNode, not analyser
+    // or the buffer source — same "what's actually audible" reasoning as
+    // the site's own analyser tap in loadBuffer() above (gain sits before
+    // both). null until preload() has actually created it; Spectrum awaits
+    // AudioEngine.preload() before reading this.
+    get outputNode() {
+      return gainNode;
     },
   };
 })();
@@ -1325,6 +1343,347 @@ const Wave = (() => {
 })();
 
 /* --------------------------------------------------------------------------
+   Spectrum (Phase 8)
+   -----------------------------------------------------------------------
+   A slim LED-bar frequency strip pinned to the top edge, via the vendored
+   audioMotion-analyzer (vendor/audioMotion-analyzer.js — see
+   vendor/README.md for what's vendored and why). An accent, not a second
+   full analyzer UI: full-octave bands (mode 8 = 10 bars), a single-hue
+   gradient built from the live --color-accent token, background painting
+   turned off (showBgColor/overlay) so the page's own background shows
+   through and only the lit LED segments read.
+
+   Patches into the *existing* Web Audio graph rather than opening a second
+   AudioContext or a second AnalyserNode: connectInput() (called internally
+   by the `source` option) just adds another consumer on AudioEngine's own
+   gainNode (AudioEngine.outputNode) — the same "what's actually audible"
+   tap point the site's own analyser already uses (see loadBuffer()'s
+   comment on gain-before-analyser). connectSpeakers:false matters here:
+   left at its default, audioMotion would also wire its own path to
+   ctx.destination, which would sum with the graph's existing path there
+   and audibly double the volume.
+
+   Desktop-only (mobileMode gate, mirrors Cursor/Magnetic/Orb below) and
+   skipped under reduced motion, matching Wave/AudioEngine's own policy of
+   no ambient motion for those visitors. Fails soft throughout: any
+   construction error (unsupported browser, load issue) is caught and
+   logged, same spirit as AudioEngine's own audioUnavailable path — never
+   thrown into the bootstrap IIFE.
+   -------------------------------------------------------------------------- */
+const Spectrum = (() => {
+  let instance = null;
+  const GRADIENT_NAME = 'diskevich';
+
+  function readAccent() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim() || '#c97a3d';
+  }
+
+  // Re-registering an already-selected gradient regenerates it in place
+  // (audioMotion-analyzer's own registerGradient behavior) — safe to call
+  // any time, including from the theme-toggle handler.
+  function registerBrandGradient() {
+    if (!instance) return;
+    instance.registerGradient(GRADIENT_NAME, { colorStops: [readAccent()] });
+  }
+
+  function refreshColors() {
+    registerBrandGradient();
+  }
+
+  function pause() {
+    if (instance) instance.toggleAnalyzer(false);
+  }
+
+  function resume() {
+    if (instance) instance.toggleAnalyzer(true);
+  }
+
+  async function init() {
+    if (mobileMode || prefersReducedMotion()) return;
+    const container = document.getElementById('spectrum-container');
+    if (!container) return;
+    try {
+      await AudioEngine.preload(); // memoized — safe alongside main.js's own preload kick-off
+      const node = AudioEngine.outputNode;
+      if (!node) return; // AudioEngine.audioUnavailable path — nothing to visualize
+      instance = new AudioMotionAnalyzer(container, {
+        source: node,
+        connectSpeakers: false,
+        height: 64,
+        mode: 8, // full-octave bands — few, deliberate bars rather than a dense wall
+        ledBars: true,
+        showScaleX: false,
+        showPeaks: true,
+        showBgColor: false,
+        overlay: true,
+        smoothing: 0.7,
+      });
+      registerBrandGradient();
+      instance.gradient = GRADIENT_NAME;
+    } catch (err) {
+      console.warn('[diskevich] Spectrum: audioMotion-analyzer unavailable, skipping the spectrum accent.', err);
+      instance = null;
+    }
+  }
+
+  return { init, refreshColors, pause, resume };
+})();
+
+/* --------------------------------------------------------------------------
+   Orb (Phase 8)
+   -----------------------------------------------------------------------
+   A soft, bass-deforming background glow behind the wave — Three.js + a
+   hand-written GLSL shader, vendored locally (vendor/three.module.js — see
+   vendor/README.md). Sits one z-index below #wave-canvas (style.css), so
+   the wave line always reads on top of it; fades with --mix via CSS, same
+   idiom as everywhere else, no JS needed for that part.
+
+   Vertex shader displaces an icosahedron along its own normals using a
+   classic 3D simplex noise function (Ashima Arts / Stefan Gustavson's
+   widely-used public implementation, MIT-licensed, hand-copied inline —
+   small enough that vendoring a whole noise library for it isn't worth a
+   third dependency) combined with the live uBass uniform. Fragment shader
+   adds a Fresnel rim term tinted with the same --color-accent token Wave
+   and Spectrum read, so all three accents stay visually in sync.
+
+   No GSAP: AudioEngine.bands is already the exact EMA-smoothed "inertia"
+   a tween library would add on top, so uBass is fed straight from it.
+   Desktop-only + reduced-motion-gated (mirrors Cursor/Magnetic/Spectrum)
+   and fails soft if a WebGL context can't be obtained at all — never
+   throws into the bootstrap IIFE. Rendered from inside the existing
+   frameLoop() (see render(), called next to Wave.draw()) rather than a
+   second independent rAF loop, so it shares one frame clock and gets
+   tab-hidden pause/resume for free via frameLoop's own
+   stopLoop()/startLoop().
+   -------------------------------------------------------------------------- */
+const Orb = (() => {
+  let renderer = null;
+  let scene, camera, mesh, material;
+  let ready = false;
+  let clockStart = 0;
+
+  const VERTEX_SHADER = `
+    uniform float uTime;
+    uniform float uBass;
+    varying vec3 vNormal;
+    varying vec3 vViewPosition;
+
+    // --- Ashima Arts / Stefan Gustavson simplex noise (webgl-noise, MIT) ---
+    vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+    vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+    float snoise(vec3 v) {
+      const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+      const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+      vec3 i  = floor(v + dot(v, C.yyy));
+      vec3 x0 = v - i + dot(i, C.xxx);
+      vec3 g = step(x0.yzx, x0.xyz);
+      vec3 l = 1.0 - g;
+      vec3 i1 = min(g.xyz, l.zxy);
+      vec3 i2 = max(g.xyz, l.zxy);
+      vec3 x1 = x0 - i1 + C.xxx;
+      vec3 x2 = x0 - i2 + C.yyy;
+      vec3 x3 = x0 - D.yyy;
+      i = mod289(i);
+      vec4 p = permute(permute(permute(
+                 i.z + vec4(0.0, i1.z, i2.z, 1.0))
+               + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+               + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+      float n_ = 0.142857142857;
+      vec3 ns = n_ * D.wyz - D.xzx;
+      vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+      vec4 x_ = floor(j * ns.z);
+      vec4 y_ = floor(j - 7.0 * x_);
+      vec4 x = x_ * ns.x + ns.yyyy;
+      vec4 y = y_ * ns.x + ns.yyyy;
+      vec4 h = 1.0 - abs(x) - abs(y);
+      vec4 b0 = vec4(x.xy, y.xy);
+      vec4 b1 = vec4(x.zw, y.zw);
+      vec4 s0 = floor(b0) * 2.0 + 1.0;
+      vec4 s1 = floor(b1) * 2.0 + 1.0;
+      vec4 sh = -step(h, vec4(0.0));
+      vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+      vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+      vec3 p0 = vec3(a0.xy, h.x);
+      vec3 p1 = vec3(a0.zw, h.y);
+      vec3 p2 = vec3(a1.xy, h.z);
+      vec3 p3 = vec3(a1.zw, h.w);
+      vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+      p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+      vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+      m = m * m;
+      return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+    }
+
+    // Displacement amount for a given (unit-length) direction off the sphere —
+    // a separate function, not inlined into main(), because the normal
+    // recomputation below needs to re-sample it at neighboring points.
+    float displacement(vec3 dir) {
+      float n = snoise(dir * 1.1 + vec3(0.0, 0.0, uTime * 0.1));
+      // Gentle undulation, not spikes: at radius 1 this tops out around
+      // ~20% of the radius even at full bass — tuned down hard from an
+      // initial pass that read as a jagged crystal/starburst rather than a
+      // soft glowing orb (see main.js git history/PR discussion).
+      return n * (0.035 + uBass * 0.16);
+    }
+
+    void main() {
+      vec3 n = normal;
+      vec3 pos = position + n * displacement(n);
+
+      // Recompute the normal from the *displaced* surface via a finite-
+      // difference tangent frame, rather than reusing the original sphere's
+      // normal. With any non-trivial displacement, the stale sphere normal
+      // stops matching the actual surface and the Fresnel term in the
+      // fragment shader below reads as flat, faceted shading instead of a
+      // smooth glow.
+      vec3 tangent = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+      vec3 bitangent = normalize(cross(n, tangent));
+      float eps = 0.01;
+      vec3 nT = normalize(n + tangent * eps);
+      vec3 nB = normalize(n + bitangent * eps);
+      vec3 posT = position + tangent * eps + nT * displacement(nT);
+      vec3 posB = position + bitangent * eps + nB * displacement(nB);
+      vec3 displacedNormal = normalize(cross(posT - pos, posB - pos));
+      if (dot(displacedNormal, n) < 0.0) displacedNormal = -displacedNormal; // keep it outward-facing
+
+      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+      vViewPosition = -mvPosition.xyz;
+      vNormal = normalize(normalMatrix * displacedNormal);
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+  const FRAGMENT_SHADER = `
+    uniform vec3 uColor;
+    uniform float uOpacity;
+    varying vec3 vNormal;
+    varying vec3 vViewPosition;
+
+    void main() {
+      vec3 viewDir = normalize(vViewPosition);
+      // Higher power + a lower base fill than a first pass: reads as a rim
+      // of light around the silhouette with a mostly-transparent center,
+      // rather than a solid faceted shape — "glow", not "material".
+      float fresnel = pow(1.0 - max(dot(normalize(vNormal), viewDir), 0.0), 2.6);
+      vec3 color = uColor * (0.06 + fresnel * 1.2);
+      gl_FragColor = vec4(color, fresnel * uOpacity);
+    }
+  `;
+
+  function readColor() {
+    const hex = (getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim() || '#c97a3d').replace(
+      '#',
+      ''
+    );
+    const h = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+    const n = parseInt(h, 16);
+    return new THREE.Color(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+  }
+
+  function refreshColors() {
+    if (!material) return;
+    material.uniforms.uColor.value.copy(readColor());
+  }
+
+  function resize() {
+    if (!renderer) return;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2); // same DPR cap as Wave.resize()
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(width, height, false); // false: leave canvas.style sizing to CSS (100%)
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }
+
+  let resizeTimer = null;
+  function onResize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 120); // debounced, same as Wave.onResize()
+  }
+
+  function init() {
+    if (mobileMode || prefersReducedMotion()) return;
+    const canvas = document.getElementById('orb-canvas');
+    if (!canvas) return;
+
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    } catch (err) {
+      // No WebGL (old browser, disabled at the OS/driver level, etc.) — fail
+      // soft exactly like AudioEngine.preload()'s own audioUnavailable path.
+      console.warn('[diskevich] Orb: WebGL unavailable, skipping the 3D accent.', err);
+      renderer = null;
+      return;
+    }
+    renderer.setClearColor(0x000000, 0); // transparent — the page's own background shows through
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20);
+    // Distance tuned so the orb reads as a background accent behind the
+    // wave (roughly a third of viewport height), not a hero element — an
+    // initial pass at z=3.4 filled ~70% of the screen and fought the wave
+    // for attention instead of sitting quietly behind it.
+    camera.position.z = 7.5;
+
+    material = new THREE.ShaderMaterial({
+      vertexShader: VERTEX_SHADER,
+      fragmentShader: FRAGMENT_SHADER,
+      uniforms: {
+        uTime: { value: 0 },
+        uBass: { value: 0 },
+        uColor: { value: readColor() },
+        uOpacity: { value: 0.85 },
+      },
+      transparent: true,
+      depthWrite: false,
+      // Additive, not normal alpha blending: normal blending against the
+      // *light* theme's near-white background made the Fresnel rim read as
+      // a solid, hard-edged pale disc with a dark outline — the opposite of
+      // "glow". Additive blending only ever brightens what's already there
+      // (and clips harmlessly toward white near a light background instead
+      // of drawing a visible edge), so the same shader reads as a warm glow
+      // in both themes instead of needing separate tuning for each.
+      blending: THREE.AdditiveBlending,
+    });
+    mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 5), material);
+    scene.add(mesh);
+
+    // Defensive touch (matches the codebase's fail-soft style elsewhere):
+    // a lost context would otherwise make render() below throw every frame.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      ready = false;
+    });
+
+    resize();
+    window.addEventListener('resize', onResize);
+    clockStart = performance.now();
+    ready = true;
+  }
+
+  // Called from frameLoop(), right alongside Wave.draw() — see that call's
+  // own try/catch for why a throw here must never be allowed to repeat
+  // silently forever. Mirrors Wave.draw()'s own `!awake` branch: nothing
+  // is ever rendered pre-interaction (the canvas simply stays untouched,
+  // i.e. fully transparent) so the orb appears as part of the same wake
+  // moment as the wave, rather than sitting there from first paint.
+  function render(ts, bands, awake) {
+    if (!ready || !awake) return;
+    material.uniforms.uTime.value = (ts - clockStart) / 1000;
+    material.uniforms.uBass.value = bands.bass;
+    mesh.rotation.y += 0.0016;
+    mesh.rotation.x += 0.0007;
+    renderer.render(scene, camera);
+  }
+
+  return { init, render, refreshColors };
+})();
+
+/* --------------------------------------------------------------------------
    Cursor (Phase 7)
    -----------------------------------------------------------------------
    A small dot that follows the pointer and grows into a ring over anything
@@ -1481,6 +1840,8 @@ const Magnetic = (() => {
   }
 
   Wave.init();
+  Spectrum.init(); // no-ops internally on mobile / reduced-motion / load failure
+  Orb.init(); // no-ops internally on mobile / reduced-motion / no WebGL
   Cursor.init();
   Magnetic.init();
 
@@ -1692,9 +2053,11 @@ const Magnetic = (() => {
       // Private browsing / storage disabled: theme still applies for this
       // session, it just won't persist across visits.
     }
-    // --color-fg / --color-accent just changed; Wave cached them at
-    // init and only re-reads on demand, not every frame.
+    // --color-fg / --color-accent just changed; Wave/Spectrum/Orb all
+    // cached them at init and only re-read on demand, not every frame.
     Wave.refreshColors();
+    Spectrum.refreshColors();
+    Orb.refreshColors();
   });
 
   // Secret "rave burst": long-press on the artist name. No visible
@@ -1765,6 +2128,7 @@ const Magnetic = (() => {
   let rafId = null;
   let lastSleepDrawTs = 0;
   let waveDrawErrorLogged = false; // see the try/catch around Wave.draw() in frameLoop
+  let orbRenderErrorLogged = false; // see the try/catch around Orb.render() in frameLoop
   // Barely-moving content doesn't need 60fps: while sleeping (pre-
   // interaction), redraw only a few times a second instead of every frame.
   // Genuinely cheaper (near-zero CPU during however long the page sits
@@ -1819,6 +2183,27 @@ const Magnetic = (() => {
         console.error('[diskevich] Wave.draw() threw — recovering on next frame.', err);
       }
     }
+
+    // Phase 8: micro-VU pulse (style.css's .mute-toggle / crossfader thumb
+    // rules read this). Only while awake — bands are naturally silent
+    // beforehand anyway, so there's nothing meaningful to write. Mute-aware
+    // for free: gain sits before the analyser (see AudioEngine.loadBuffer()),
+    // so bands.bass already decays toward 0 on mute without any special-
+    // casing here.
+    if (awake) {
+      html.style.setProperty('--band-bass', bands.bass.toFixed(3));
+    }
+
+    // Same try/catch-and-log-once shape as Wave.draw() above, for the same
+    // reason: one bad frame (logged) beats a silently-repeating throw.
+    try {
+      Orb.render(ts, bands, awake);
+    } catch (err) {
+      if (!orbRenderErrorLogged) {
+        orbRenderErrorLogged = true;
+        console.error('[diskevich] Orb.render() threw — recovering on next frame.', err);
+      }
+    }
   }
 
   // Phase 6: stop the loop entirely while the tab is hidden — no canvas
@@ -1839,8 +2224,14 @@ const Magnetic = (() => {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopLoop();
+      // Orb's own render() is already covered by stopLoop() above (it's
+      // called from inside frameLoop) — Spectrum keeps an independent rAF
+      // loop internal to audioMotion-analyzer, so it needs its own
+      // pause/resume pair here.
+      Spectrum.pause();
     } else {
       startLoop();
+      Spectrum.resume();
       // iOS can suspend an already-unlocked AudioContext during
       // backgrounding with no event of its own to say so — see
       // AudioEngine.resumeIfSuspended()'s own comment. No-op if the
