@@ -1,10 +1,12 @@
 /* ==========================================================================
    diskevich — design system
-   Concept: "Crossfader" — two decks (artist / booking), one continuous mix.
-   A single range input drives everything: --mix (0..1) blends the wave's
-   amplitude and the deck-b-panel's opacity in style; AudioEngine reads the
-   same number for volume, in main.js. Nothing here is a "section" — it's
-   all one scene at whatever proportion the visitor leaves the fader at.
+   Concept: one continuous scene, no navigation. Tap/click anywhere wakes
+   the wave and starts the track; the wordmark, bio and links then reveal
+   themselves in turn (see main.js's startRevealSequence()), and once
+   they've all landed, the wave settles to a dimmer amplitude so the text
+   stays legible over it (main.js's tweenMixToOne(), still driving the same
+   --mix (0..1) custom property the scrim/orb/wave amplitude all read here —
+   just written by a script now instead of a drag gesture).
 
    Font pairing rationale:
    - Display: "Unbounded" (Google Fonts, single external request) — a huge,
@@ -80,14 +82,6 @@
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
   --tap-min: 44px;
-  /* The crossfader's real total footprint from the viewport's bottom edge:
-     its own bottom offset (--space-md) + its height (--tap-min) + the gap
-     to the fader-hint above it (--space-xs) + the hint's own line (~1.3em).
-     .scene's bottom padding is reserved to at least this (see .scene,
-     below) so nothing centered in it — namely #deck-b-panel — can ever
-     render underneath the fixed crossfader, on any viewport height. Kept
-     as one named value rather than repeating the sum wherever it's needed. */
-  --fader-zone: calc(var(--space-md) + var(--tap-min) + var(--space-xs) + 1.3em);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -173,10 +167,10 @@ h2 {
 /* Visually-hidden-but-accessible: carries the site's real name (see the
    permanent <h1> in index.html) without it needing to be visible — the big
    styled wordmark inside .deck-b-panel is aria-hidden and only meaningfully
-   present once the crossfader has been dragged, so this is what screen
-   reader users get regardless of fader position. Standard clip-based
-   pattern, not display:none (which would drop it from the accessibility
-   tree entirely). */
+   present once the reveal sequence has run, so this is what screen reader
+   users get regardless of where that sequence currently is. Standard
+   clip-based pattern, not display:none (which would drop it from the
+   accessibility tree entirely). */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -199,14 +193,14 @@ h2 {
   display: block;
 }
 
-/* ---- Orb (Phase 8) ----
+/* ---- Orb ----
    Three.js + GLSL background accent — see main.js's Orb module. One layer
    below #wave-canvas (z-index 0 vs 1) so it always reads as a soft glow
    behind the wave line, never on top of it. Fades with the same --mix the
-   deck-b-panel/scrim already use (fully present in "artist" mode, gone by
-   "booking") — no JS needed for the fade itself. Orb.init() no-ops on
-   mobile / reduced-motion / no-WebGL, so this simply stays an empty,
-   invisible canvas in those cases. */
+   scrim uses (fully present while the wave is awake, gone once the reveal
+   sequence settles it) — no JS needed for the fade itself. Orb.init()
+   no-ops on mobile / reduced-motion / no-WebGL, so this simply stays an
+   empty, invisible canvas in those cases. */
 #orb-canvas {
   position: fixed;
   inset: 0;
@@ -226,37 +220,6 @@ h2 {
 
 @media (prefers-reduced-motion: reduce) {
   #orb-canvas {
-    display: none;
-  }
-}
-
-/* ---- Spectrum (Phase 8) ----
-   audioMotion-analyzer LED-bar strip — see main.js's Spectrum module. A
-   slim accent pinned to the top edge rather than a full analyzer panel, so
-   it reads as a level-meter detail rather than competing with the wave for
-   attention. Same fade-with-mix idiom as everything else here; hidden on
-   mobile (Spectrum.init() itself also skips instantiating there, so this is
-   belt-and-suspenders) and under reduced motion. */
-#spectrum-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  height: 64px;
-  pointer-events: none;
-  opacity: calc(0.6 * (1 - var(--mix, 0)));
-  transition: opacity var(--dur-instant) linear;
-}
-
-@media (max-width: 768px), (pointer: coarse) {
-  #spectrum-container {
-    display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #spectrum-container {
     display: none;
   }
 }
@@ -328,32 +291,25 @@ body.has-custom-cursor * {
   align-items: center;
   justify-content: center;
   text-align: center;
-  /* Bottom padding is whichever is larger: the usual --space-lg breathing
-     room, or the crossfader's actual footprint (--fader-zone) — on a short
-     viewport the fader zone is taller than --space-lg ever was, and
-     without this, centered content (#deck-b-panel) can render underneath
-     the fixed crossfader regardless of how carefully *its own* max-height
-     is capped, because centering happens within whatever room this
-     padding leaves, not around the fader zone directly. */
   padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
-    calc(max(var(--space-lg), var(--fader-zone)) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
+    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
 }
 
 /* Deck B's legibility scrim, deliberately living here rather than as a
-   pseudo-element on #deck-b-panel itself: #deck-b-panel's own opacity is
-   var(--mix) (see style.css further down / main.js's applyMix()), and a
-   child can't opt out of an ancestor's opacity — a scrim nested inside it
-   would be capped at the same faint 30-40% alpha as the text it's meant
-   to back, right at the mix range where someone's actually trying to
-   read. Living on .scene instead, its own opacity ramps to fully solid
-   by roughly mix=0.45 (`min(1, mix * 2.2)`) — well before the text panel
-   finishes its own fade-in at mix=1 — so whatever text is legible is
-   already sitting on a flat, opaque backdrop instead of both fading
-   together into mush. Fixed + full-viewport rather than shaped to the
-   panel's bounds: simpler, and correct either way since it's inert
-   (pointer-events: none) and z-index: -1 within .scene's own stacking
-   context keeps it under the panel/crossfader but still above the wave
-   canvas (.scene itself is z-index 2, above the canvas's z-index 1). */
+   pseudo-element on #deck-b-panel itself: #deck-b-panel's three children
+   each carry their own independent opacity now (see .is-revealed further
+   down), and a scrim nested inside any one of them would only ever back
+   that one piece of text, not the panel as a whole. Living on .scene
+   instead, its own opacity ramps up as the settle tween (main.js's
+   tweenMixToOne()) pushes --mix toward 1 — by roughly mix=0.45
+   (`min(1, mix * 2.2)`) it's already fully solid, well before that tween
+   finishes — so whatever text is on screen by then is sitting on a flat,
+   opaque backdrop rather than fading in over a half-lit wave. Fixed +
+   full-viewport rather than shaped to the panel's bounds: simpler, and
+   correct either way since it's inert (pointer-events: none) and
+   z-index: -1 within .scene's own stacking context keeps it under the
+   panel but still above the wave canvas (.scene itself is z-index 2,
+   above the canvas's z-index 1). */
 .scene::before {
   content: '';
   position: fixed;
@@ -427,16 +383,11 @@ body.has-custom-cursor * {
 }
 
 /* ---- Deck B panel ----
-   Bio / dates / contact — the "person who signs the contract" half of the
-   crossfader. Always in the DOM; opacity and a slight rise are bound
-   directly to --mix (set on <html> by main.js's applyMix() on every fader
-   'input' event), so this is a continuous blend, not a shown/hidden
-   section. inert/aria-hidden are toggled in JS at a small mix threshold —
-   see applyMix()'s own comment for why a hard cutoff is unavoidable there
-   even though the visual side is fully continuous. A soft radial scrim
-   behind the text (::before) keeps it legible over the wave without a
-   hard modal box; it fades with the same opacity as everything else here
-   since it's a child of this element. */
+   Wordmark / bio / links. Always in the DOM, a plain layout container now
+   (no opacity/transform of its own) — inert/aria-hidden are flipped once,
+   at the top of main.js's startRevealSequence(), and each of its three
+   children (.mark, .bio-text, .links-group) then reveals itself
+   independently and in turn — see .is-revealed further down. */
 .deck-b-panel {
   position: relative;
   display: flex;
@@ -444,29 +395,20 @@ body.has-custom-cursor * {
   align-items: center;
   gap: var(--space-md);
   max-width: 42rem;
-  /* This panel now shares the scene with the crossfader (fixed, bottom)
-     instead of being its own full-screen overlay. Its cap matches .scene's
-     own content-box height exactly (100dvh minus .scene's own padding,
-     including the --fader-zone reservation applied there) — not a
-     separately-guessed number: .scene's padding is what actually keeps
-     the crossfader clear, this only has to not exceed the room that
-     leaves. Whatever still doesn't fit (a very short landscape phone, once
-     content is already tightened by the max-height media query below)
-     scrolls internally rather than overflowing past that box. */
-  max-height: calc(
-    100dvh - var(--safe-t) - var(--safe-b) - var(--space-lg) - max(var(--space-lg), var(--fader-zone))
-  );
+  /* Cap matches .scene's own content-box height (100dvh minus .scene's own
+     padding) — not a separately-guessed number. Whatever still doesn't fit
+     (a very short landscape phone, once content is already tightened by
+     the max-height media query below) scrolls internally rather than
+     overflowing past that box. */
+  max-height: calc(100dvh - var(--safe-t) - var(--safe-b) - var(--space-lg) * 2);
   overflow-y: auto;
   padding: 0 calc(var(--space-md) + var(--safe-r)) var(--space-sm) calc(var(--space-md) + var(--safe-l));
-  opacity: var(--mix, 0);
-  transform: translateY(calc((1 - var(--mix, 0)) * 16px));
-  transition: opacity var(--dur-instant) linear, transform var(--dur-instant) var(--ease-out-expo);
 }
 
 /* The big wordmark reused the full hero display size when it was the only
-   thing on screen (Living Wave concept); here it's one of five stacked
-   blocks sharing the scene with bio/dates/socials, so it's scaled down
-   considerably to leave room for the rest without crowding the crossfader. */
+   thing on screen (Living Wave concept); here it's one of three stacked
+   reveal groups sharing the scene with bio/links, so it's scaled down
+   considerably to leave room for the rest. */
 .deck-b-panel .artist-name {
   font-size: clamp(2rem, 8vw, 4.5rem);
 }
@@ -474,11 +416,9 @@ body.has-custom-cursor * {
 /* Short viewports (a phone in landscape, mainly): the panel's natural
    content height comfortably clears a portrait phone but not a ~375-430px-
    tall landscape one. Tighten spacing and type here rather than lean on
-   scrolling alone — a same-screen reveal is the whole point of the
-   crossfader; scrolling is the fallback for what's still too tall after
-   this, not the primary answer. Deliberately placed *after* the rules it
-   overrides (same specificity either way — two classes — so source order
-   is what actually decides the winner, not the media condition matching). */
+   scrolling alone. Deliberately placed *after* the rules it overrides
+   (same specificity either way — two classes — so source order is what
+   actually decides the winner, not the media condition matching). */
 @media (max-height: 480px) {
   .deck-b-panel {
     gap: var(--space-xs);
@@ -493,14 +433,26 @@ body.has-custom-cursor * {
     font-size: var(--fs-small);
     line-height: 1.5;
   }
+}
 
-  .deck-b-panel .dates-list {
-    gap: var(--space-xs);
-  }
+/* ---- Reveal groups ----
+   Each of #deck-b-panel's three children fades and rises into place
+   independently, staggered one at a time by main.js's
+   startRevealSequence() adding .is-revealed — same fade+rise idiom the
+   site has used elsewhere for a one-shot, script-triggered reveal. */
+.deck-b-panel > .mark,
+.deck-b-panel > .bio-text,
+.deck-b-panel > .links-group {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
+}
 
-  .deck-b-panel .dates-list li {
-    font-size: var(--fs-small);
-  }
+.deck-b-panel > .mark.is-revealed,
+.deck-b-panel > .bio-text.is-revealed,
+.deck-b-panel > .links-group.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .bio-text {
@@ -583,280 +535,140 @@ body.has-custom-cursor * {
   text-transform: lowercase;
 }
 
-/* ---- Crossfader ----
-   The site's only navigation. A native <input type="range"> — not a custom
-   div — specifically for free keyboard support (arrow keys, Home/End) and
-   correct value announcement; styled here to read as a physical DJ mixer
-   fader instead of a browser default. Fixed bottom-center, same slot the
-   old bio/dates/booking nav used to occupy. */
-.crossfader {
-  position: fixed;
-  left: 50%;
-  bottom: calc(var(--space-md) + var(--safe-b));
-  transform: translateX(-50%);
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: min(420px, calc(100vw - var(--space-md) * 2));
-}
-
-.crossfader-label {
-  font-family: var(--font-text);
-  font-size: var(--fs-nav);
-  letter-spacing: 0.12em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-  white-space: nowrap;
-  transition: transform var(--dur-fast) var(--ease-spring);
-}
-
-.crossfader-input {
-  flex: 1;
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: var(--tap-min);
-  background: transparent;
-  cursor: pointer;
-}
-
-.crossfader-input::-webkit-slider-runnable-track {
-  height: 3px;
-  background: var(--color-line);
-  border-radius: 2px;
-}
-
-.crossfader-input::-moz-range-track {
-  height: 3px;
-  background: var(--color-line);
-  border-radius: 2px;
-}
-
-/* Thick rectangular thumb, mixer-style, rather than a round default —
-   width/height are the physical fader cap; margin-top centers it on the
-   3px webkit track ((3 - 28) / 2). Firefox's ::-moz-range-thumb needs no
-   such offset — it centers on the track automatically. */
-.crossfader-input::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 28px;
-  margin-top: -12.5px;
-  border-radius: 3px;
-  background: var(--color-accent);
-  border: 1px solid var(--color-bg);
-  box-shadow: 0 0 0 1px var(--color-line);
-  transition: transform var(--dur-fast) var(--ease-out-expo);
-}
-
-.crossfader-input::-moz-range-thumb {
-  width: 14px;
-  height: 28px;
-  border-radius: 3px;
-  background: var(--color-accent);
-  border: 1px solid var(--color-bg);
-  box-shadow: 0 0 0 1px var(--color-line);
-  transition: transform var(--dur-fast) var(--ease-out-expo);
-}
-
-.crossfader-input:hover::-webkit-slider-thumb,
-.crossfader-input:focus-visible::-webkit-slider-thumb {
-  transform: scaleY(1.15);
-}
-
-.crossfader-input:hover::-moz-range-thumb,
-.crossfader-input:focus-visible::-moz-range-thumb {
-  transform: scaleY(1.15);
-}
-
-.crossfader-input:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 4px;
-}
-
-.fader-hint {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + var(--space-xs));
-  transform: translateX(-50%);
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.15em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-  white-space: nowrap;
-  opacity: 0.8;
-  pointer-events: none;
-  transition: opacity var(--dur-medium) var(--ease-out-expo);
-}
-
-/* Fades out for good the moment the fader's first been touched — see
-   main.js's beginCrossfading(). --dur-medium already zeroes under
-   prefers-reduced-motion, so this just disappears instantly there instead
-   of via a fade, matching the rest of the site's reduced-motion handling. */
-body[data-state='awake'] .fader-hint {
-  opacity: 0;
-}
-
-/* ---- Mobile story ----
-   The crossfader is a desktop metaphor: a drag gesture judged by eye
-   against a wide horizontal track, with #deck-b-panel packing wordmark +
-   tagline + bio + dates + socials into one screen to share it. That's
-   legible on a monitor at arm's length; on an actual phone it reads as
-   "there's nothing here" — confirmed the hard way, not guessed. Below this
-   breakpoint, #mobile-story replaces both entirely: one idea per full-
-   screen, scroll-snapped step, sized to actually be read. This mirrors
-   main.js's own `mobileMode` boundary exactly (width<=768 OR coarse
-   pointer) so the JS and CSS split points can never disagree about which
-   presentation is live. */
-#mobile-story {
-  display: none;
-}
-
-@media (max-width: 768px), (pointer: coarse) {
-  .crossfader,
-  #deck-b-panel {
-    display: none;
-  }
-
-  #mobile-story {
-    display: block;
-    position: relative;
-    z-index: 2;
-    height: 100dvh;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scroll-snap-type: y mandatory;
-    -webkit-overflow-scrolling: touch;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #mobile-story {
-    /* Snapping is a motion-adjacent affordance (it seizes control of the
-       scroll gesture to finish it for you) — a reduced-motion visitor gets
-       plain, self-paced scroll instead, same spirit as every --dur-*
-       token in this file zeroing out rather than the animation just
-       running slower. */
-    scroll-snap-type: none;
-  }
-}
-
-.story-step {
-  position: relative;
-  min-height: 100dvh;
-  scroll-snap-align: start;
+/* Wraps the social icon row + the "tour dates" link so they reveal
+   together as #deck-b-panel's third stagger step — see .is-revealed
+   above. */
+.links-group {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-md);
-  text-align: center;
-  padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
-    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
-  /* The step itself no longer fades as one flat block — see .reveal below,
-     which each step's actual content pieces carry individually, cascading
-     in one after another as the step is scrolled to (main.js's
-     IntersectionObserver toggles --visible; independent of --mix, which
-     only drives audio/wave here, not this). */
+  gap: var(--space-sm);
 }
 
-/* One thing materializing into focus at a time, not a block dissolving in:
-   starts blurred, slightly small and dropped, and resolves to sharp/full
-   size/settled as its step becomes current. Reads closer to a lens racking
-   into focus than a fade — matches the "reveal" language ".fader-hint"/
-   the crossfader panel already use elsewhere, just built for a one-shot
-   scroll-triggered moment instead of a continuously-scrubbed one. Applied
-   per-element (not once per .story-step) so a step with more than one
-   piece of content — the hero's name + tap hint, a sentence split into two
-   lines, two tour dates, the social icons before the CTA — reveals them in
-   sequence via .reveal--d1/--d2 below, not all at once. */
-.reveal {
-  opacity: 0;
-  transform: translateY(22px) scale(0.96);
-  filter: blur(6px);
-  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo),
-    filter var(--dur-medium) var(--ease-out-expo);
+.dates-trigger {
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: var(--tap-min);
+  padding: var(--space-2xs) var(--space-xs);
+  transition: color var(--dur-fast) var(--ease-out-expo);
 }
 
-.story-step--visible .reveal {
+.dates-trigger:hover,
+.dates-trigger:focus-visible {
+  color: var(--color-accent);
+}
+
+.dates-trigger:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* ---- Tour dates dialog ----
+   Native <dialog>/showModal() gets focus-trapping, Esc-to-close and
+   correct aria-modal semantics for free — see main.js for the (very
+   short) open/close wiring. @starting-style animates it fading+scaling
+   in on open; closing is left as the native instant disappear rather than
+   adding the extra machinery a matching close transition would need, in
+   keeping with how little else on this site choreographs its own exit. */
+.dates-dialog {
+  /* The sitewide `* { margin: 0 }` reset at the top of this file zeroes
+     out <dialog>'s own UA-stylesheet default of `margin: auto`, which is
+     what actually centers it in the viewport when shown via showModal() —
+     without restoring it explicitly here, the dialog renders pinned to
+     the top-left corner instead. */
+  margin: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+  color: var(--color-fg);
+  padding: var(--space-lg) var(--space-md);
+  max-width: min(28rem, calc(100vw - var(--space-md) * 2));
+  width: 100%;
   opacity: 1;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
+  transform: scale(1);
+  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
 }
 
-.reveal--d1 {
-  transition-delay: 110ms;
+@starting-style {
+  .dates-dialog[open] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
 }
 
-.reveal--d2 {
-  transition-delay: 220ms;
+.dates-dialog::backdrop {
+  background: var(--color-overlay-bg);
+  opacity: 1;
+  transition: opacity var(--dur-medium) var(--ease-out-expo);
 }
 
-/* Split-sentence steps (tagline/bio): each .reveal span is meant to read
-   as its own line, materializing a beat after the one before it — block
-   makes that stacking happen regardless of the <p>'s own inline flow. */
-.story-tagline .reveal,
-.story-bio .reveal {
+@starting-style {
+  .dates-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+.dates-dialog-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  text-align: center;
+  text-transform: lowercase;
+  margin-bottom: var(--space-md);
+}
+
+.dates-dialog .dates-list {
+  margin-bottom: var(--space-md);
+}
+
+.dates-dialog-close {
   display: block;
+  margin: 0 auto;
+  font-family: var(--font-text);
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: var(--space-xs) var(--space-md);
+  min-height: var(--tap-min);
+  transition: color var(--dur-fast) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
 }
 
-/* .social-link and .story-tap-hint each already declare their own
-   `transition` (hover color, border-color) elsewhere in this file. Two
-   separate `transition` shorthand declarations on the same element don't
-   merge — whichever rule comes later in the cascade wins outright for
-   every sub-property, silently dropping the other's. These two-class
-   selectors outrank both single-class rules on specificity alone
-   (0,2,0 beats 0,1,0), so they're the actual final word regardless of
-   where in the file they sit — restating the full combined list here once
-   rather than leaving that to source-order accident. */
-.social-link.reveal {
-  transition: color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo),
-    transform var(--dur-medium) var(--ease-out-expo), filter var(--dur-medium) var(--ease-out-expo);
+.dates-dialog-close:hover,
+.dates-dialog-close:focus-visible {
+  color: var(--color-fg);
+  border-color: var(--color-accent);
 }
 
-.story-tap-hint.reveal {
-  transition: opacity var(--dur-medium) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo),
-    transform var(--dur-medium) var(--ease-out-expo), filter var(--dur-medium) var(--ease-out-expo);
+.dates-dialog-close:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
 }
 
-/* Soft radial scrim behind each step's text — keeps copy legible over the
-   wave without a hard modal box. Always at full strength (not tied to
-   --mix the way .scene::before is): a .story-step's own opacity is either
-   0 or 1 via .story-step--visible (main.js's IntersectionObserver), never
-   a fractional value it could get capped by, so there's no equivalent
-   "faint scrim on faint text" problem to solve here — the wave itself
-   still dims on its own via the same scroll-driven `mix` main.js feeds
-   into Wave.draw(). */
-.story-step::before {
-  content: '';
-  position: absolute;
-  inset: -6%;
-  z-index: -1;
-  /* Same fix as .deck-b-panel::before above: solid out to 60%, feathering
-     only the empty margin, so the wave/grain never bleeds through behind
-     an actual line of text. */
-  background: radial-gradient(ellipse at center, var(--color-overlay-bg) 0%, var(--color-overlay-bg) 60%, transparent 100%);
+/* ---- Entry gate ----
+   The site's only entry gesture: tap/click anywhere (main.js listens on
+   `window`, not just this button) wakes the wave and starts the track.
+   Full-viewport but pointer-events: none itself, so it never blocks
+   anything — only the button inside opts back in. Fades out for good once
+   awake, mirroring the fader-hint idiom this replaces. */
+.entry-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 
-.story-wordmark {
-  font-size: clamp(2.75rem, 15vw, 4rem);
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  text-transform: lowercase;
-  white-space: nowrap;
-  /* Same cut-through trick as the desktop .artist-name — see that rule's
-     own comment for why this specifically needs a near-black backdrop. */
-  mix-blend-mode: difference;
-}
-
-:root[data-theme='light'] .story-wordmark {
-  mix-blend-mode: normal;
-}
-
-.story-tap-hint {
+.entry-hint {
+  pointer-events: auto;
   font-family: var(--font-text);
   font-size: var(--fs-body);
   letter-spacing: 0.1em;
@@ -867,130 +679,26 @@ body[data-state='awake'] .fader-hint {
   border-radius: 999px;
   padding: var(--space-sm) var(--space-lg);
   min-height: var(--tap-min);
+  opacity: 1;
   transition: opacity var(--dur-medium) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
 }
 
-.story-tap-hint:hover,
-.story-tap-hint:focus-visible {
+.entry-hint:hover,
+.entry-hint:focus-visible {
   border-color: var(--color-accent);
 }
 
-.story-scroll-hint {
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.15em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
+.entry-hint:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
+/* --dur-medium zeroes under prefers-reduced-motion, so this just
+   disappears instantly there instead of via a fade, matching the rest of
+   the site's reduced-motion handling. */
+body[data-state='awake'] .entry-hint {
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-medium) var(--ease-out-expo);
-}
-
-/* First tap (main.js's MobileStory, mirrors the crossfader's
-   beginCrossfading()) flips body to 'awake': the tap button's job is done,
-   hand off to the scroll hint — same swap the desktop fader-hint does. */
-body[data-state='awake'] .story-tap-hint {
-  display: none;
-}
-
-body[data-state='awake'] .story-scroll-hint {
-  opacity: 0.8;
-}
-
-.story-tagline {
-  font-size: clamp(1.05rem, 4.5vw, 1.3rem);
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  color: var(--color-fg-muted);
-  max-width: 26ch;
-}
-
-.story-bio {
-  font-family: var(--font-text);
-  font-size: clamp(1.05rem, 4vw, 1.2rem);
-  line-height: 1.7;
-  color: var(--color-fg-muted);
-  max-width: 30ch;
-}
-
-.story-dates {
-  font-size: clamp(1.1rem, 4vw, 1.3rem);
-}
-
-.story-dates .date-day,
-.story-dates .date-venue {
-  font-size: inherit;
-}
-
-.story-step--finale {
-  gap: var(--space-lg);
-}
-
-/* The payoff at the end of the scroll: a large, solid-filled, animated
-   button — deliberately not just another outlined icon+label like
-   .social-link above it. Everything before this step has been quiet and
-   subtle on purpose; this one thing is allowed to be loud. */
-.story-cta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-height: 56px;
-  padding: var(--space-sm) calc(var(--space-lg) * 1.2);
-  border-radius: 999px;
-  background: var(--color-accent);
-  color: var(--color-bg);
-  font-family: var(--font-text);
-  font-size: var(--fs-nav);
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: lowercase;
-  text-decoration: none;
-  /* Paused until .story-step--visible .story-cta (below) sets it running —
-     the CTA also carries .reveal (materializing in like everything else
-     in the mobile story), and a running CSS animation takes over whatever
-     property it touches outright, pre-empting a `transition` on that same
-     property. Left running from the start, the bounce's own keyframes
-     would fight .reveal's transform transition the instant this step
-     becomes visible, and the CTA would just snap into its bounce cycle
-     instead of visibly rising into place first. animation-delay here is
-     timed to start right as .reveal--d2's transition (220ms delay +
-     --dur-medium) actually finishes, so the bounce picks up cleanly from
-     the exact resting transform the reveal already settled into — no
-     fighting, no visible seam between the two. */
-  animation: story-cta-bounce 1.8s ease-in-out infinite;
-  animation-play-state: paused;
-  animation-delay: calc(var(--dur-medium) + 220ms); /* keep in sync with .reveal--d2's transition-delay */
-}
-
-.story-step--visible .story-cta {
-  animation-play-state: running;
-}
-
-.story-cta-icon {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-}
-
-@keyframes story-cta-bounce {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .story-cta {
-    /* A state change instead of motion, same precedent as the rave-burst
-       flash and the dissolve-skip elsewhere in this file: reduced motion
-       still gets an unmistakably emphasized CTA, just not a looping bounce. */
-    animation: none;
-    box-shadow: 0 0 0 4px var(--color-accent-dim);
-  }
 }
 
 /* ---- Mute toggle ---- */
@@ -1007,15 +715,19 @@ body[data-state='awake'] .story-scroll-hint {
   border: 1px solid var(--color-line);
   border-radius: 50%;
   opacity: 0;
+  pointer-events: none;
   transition: border-color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo),
     transform var(--dur-fast) var(--ease-spring);
 }
 
-/* Hidden until the crossfader's been touched — there's nothing to mute
-   before then anyway (audio hasn't started). --dur-medium zeroes under
-   reduced motion, so it just appears instantly there instead of fading. */
+/* Hidden until entry's been triggered — there's nothing to mute before
+   then anyway (audio hasn't started). pointer-events stays off until the
+   same moment, so this invisible button can't swallow a click meant for
+   the page-wide entry gesture. --dur-medium zeroes under reduced motion,
+   so it just appears instantly there instead of fading. */
 body[data-state='awake'] .mute-toggle {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .mute-toggle:hover,
@@ -1040,22 +752,9 @@ body[data-state='awake'] .mute-toggle {
   box-shadow: 0 0 0 calc(var(--band-bass, 0) * 10px) var(--color-accent-dim);
 }
 
-.crossfader-input::-webkit-slider-thumb {
-  box-shadow: 0 0 0 1px var(--color-line), 0 0 calc(var(--band-bass, 0) * 12px) var(--color-accent-soft);
-}
-
-.crossfader-input::-moz-range-thumb {
-  box-shadow: 0 0 0 1px var(--color-line), 0 0 calc(var(--band-bass, 0) * 12px) var(--color-accent-soft);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .mute-toggle {
     box-shadow: none;
-  }
-
-  .crossfader-input::-webkit-slider-thumb,
-  .crossfader-input::-moz-range-thumb {
-    box-shadow: 0 0 0 1px var(--color-line);
   }
 }
 
@@ -1089,10 +788,10 @@ body[data-muted='true'] .mute-icon--off {
 
 /* ---- Theme toggle ----
    z-index 11, above everything else on the page: visual comfort should be
-   adjustable immediately on landing, before the crossfader's even been
-   touched — a light-sensitive visitor shouldn't have to sit through a
-   full-brightness dark screen just to reach the switch. Unlike mute-toggle,
-   always visible from load (nothing here is gated on 'awake'). */
+   adjustable immediately on landing, before entry's even been triggered —
+   a light-sensitive visitor shouldn't have to sit through a full-brightness
+   dark screen just to reach the switch. Unlike mute-toggle, always visible
+   from load (nothing here is gated on 'awake'). */
 .theme-toggle {
   position: fixed;
   top: calc(var(--space-md) + var(--safe-t));
