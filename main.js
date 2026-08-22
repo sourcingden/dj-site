@@ -4,23 +4,22 @@
    Phase 0: skeleton wiring (tap-to-enter -> awake state).
    Phase 1: audio engine — AudioContext, AnalyserNode, bass/mid/high bands,
             mute, suspended-state handling, synthetic placeholder track.
-   Phase 8: audio-reactive accent layers, additive on top of the wave — see
-            the Spectrum and Orb modules, and the micro-VU pulse wired into
-            frameLoop() below. These are the site's first external JS
-            dependencies (vendor/, see vendor/README.md for what's vendored
-            and why), which is why this file is now loaded as an ES module
-            (index.html's <script type="module">) instead of a plain script.
+   Phase 8: Orb, a Three.js + GLSL background accent, additive on top of
+            the wave, and the micro-VU pulse wired into frameLoop() below.
+            Three.js is the site's first external JS dependency (vendor/,
+            see vendor/README.md for what's vendored and why), which is
+            why this file is loaded as an ES module (index.html's
+            <script type="module">) instead of a plain script.
 
-   Crossfader: the tap-to-enter gate and the old bio/dates/booking
-   nav+overlays are gone. A single range input (#crossfader-input) is now
-   the site's only navigation — its value (mix, 0..1) drives both
-   AudioEngine's gain and Wave's amplitude continuously, and is also the
-   entry gesture (first interaction unlocks audio). See the bottom
-   bootstrapping IIFE for the wiring, and AudioEngine.setMix() / Wave.draw()
-   for how each side reads it.
+   Entry & reveal: tap/click anywhere is the site's only gesture — see
+   beginExperience() near the bottom bootstrapping IIFE. It unlocks audio,
+   wakes the wave, and kicks off startRevealSequence(), which staggers in
+   the wordmark, bio and links one at a time, then eases the wave down to a
+   settled amplitude via tweenMixToOne(). See AudioEngine.currentTargetVolume()
+   and Wave.draw()'s `mix` parameter for how the audio and visual sides each
+   read that settle value.
    ========================================================================== */
 
-import AudioMotionAnalyzer from './vendor/audioMotion-analyzer.js';
 import * as THREE from './vendor/three.module.js';
 
 /* --------------------------------------------------------------------------
@@ -88,8 +87,8 @@ function fitArtistName() {
    to its idle/audio displacement (so it stops breathing/animating on its
    own) while still letting pointer-driven distortion — direct user
    interaction, not ambient motion — spring normally. Audio never
-   autoplays for these users: the crossfader still flips the site to
-   'awake' on first interaction, but AudioEngine.start() is skipped.
+   autoplays for these users: entry still flips the site to 'awake' on
+   first interaction, but AudioEngine.start() is skipped.
    -------------------------------------------------------------------------- */
 const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 function prefersReducedMotion() {
@@ -204,7 +203,6 @@ async function generateSyntheticLoop(sampleRate) {
      the spectrum into bass/mid/high, normalizes to 0-1, and smooths with
      an exponential moving average so the visual never jitters frame to
      frame even though the FFT data is noisy.
-   - setMix(): the crossfader's audio half. See currentTargetVolume().
    -------------------------------------------------------------------------- */
 const AudioEngine = (() => {
   let ctx = null;
@@ -217,21 +215,17 @@ const AudioEngine = (() => {
   let audioUnavailable = false;
   let freqData = null;
 
-  // Crossfader mix (0 = full artist deck, 1 = full booking deck). Volume is
-  // just one axis of the same continuous blend Wave.draw() reads for the
-  // visual side — see currentTargetVolume() below and main.js's bottom
-  // bootstrapping IIFE, which is the only writer of this, via setMix().
-  let mix = 0;
-
   const bands = { bass: 0, mid: 0, high: 0 };
   const SMOOTHING = 0.25; // EMA factor; retuned visually in Phase 2 if needed
 
   // Single source of truth for "what should the gain node actually be right
   // now" — used by loadBuffer()'s initial value, start()'s fade-in target,
-  // toggleMute(), and setMix(), so none of them can drift out of sync with
-  // each other. Mute always wins outright; otherwise volume is just 1-mix.
+  // and toggleMute(), so none of them can drift out of sync with each
+  // other. Full volume once started, until manually muted — there's no
+  // "mode" to duck toward anymore (see main.js's tweenMixToOne(), which is
+  // a purely visual settle, not an audio one).
   function currentTargetVolume() {
-    return muted ? 0 : 1 - mix;
+    return muted ? 0 : 1;
   }
 
   async function loadBuffer() {
@@ -284,10 +278,10 @@ const AudioEngine = (() => {
   // forever, the analyser only ever reads silence, and the wave — driven
   // solely by its ~9px idle-noise term at that point — reads as "static"
   // even though the code all technically runs. unlock() exists purely to
-  // be the *first* synchronous statement in the crossfader's first
-  // pointerdown/keydown handler, so the resume call happens as close to
-  // the raw gesture as possible; start() still does the real awaited setup
-  // afterward.
+  // be the *first* synchronous statement in the entry gesture's handler
+  // (beginExperience(), main.js's bottom IIFE), so the resume call happens
+  // as close to the raw gesture as possible; start() still does the real
+  // awaited setup afterward.
   function unlock() {
     if (!ctx) {
       const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -385,18 +379,6 @@ const AudioEngine = (() => {
     return muted;
   }
 
-  // Crossfader-driven volume (main.js's bottom IIFE calls this on every
-  // 'input' event of the range fader). Same cancelScheduledValues +
-  // setTargetAtTime smoothing as toggleMute() above, for the same reason —
-  // a scrub mid-ramp shouldn't get stuck behind an earlier scheduled value.
-  function setMix(newMix) {
-    mix = Math.min(1, Math.max(0, newMix));
-    if (gainNode && ctx) {
-      gainNode.gain.cancelScheduledValues(ctx.currentTime);
-      gainNode.gain.setTargetAtTime(currentTargetVolume(), ctx.currentTime, 0.05);
-    }
-  }
-
   function bandAverage(from, to) {
     let sum = 0;
     let count = 0;
@@ -432,7 +414,6 @@ const AudioEngine = (() => {
     start,
     resumeIfSuspended,
     toggleMute,
-    setMix,
     update,
     get bands() {
       return bands;
@@ -440,20 +421,8 @@ const AudioEngine = (() => {
     get isMuted() {
       return muted;
     },
-    get mix() {
-      return mix;
-    },
     get isSynthetic() {
       return usingSyntheticLoop;
-    },
-    // Phase 8: tap point for Spectrum (main.js, below) to patch
-    // audioMotion-analyzer into the existing graph. gainNode, not analyser
-    // or the buffer source — same "what's actually audible" reasoning as
-    // the site's own analyser tap in loadBuffer() above (gain sits before
-    // both). null until preload() has actually created it; Spectrum awaits
-    // AudioEngine.preload() before reading this.
-    get outputNode() {
-      return gainNode;
     },
   };
 })();
@@ -930,7 +899,7 @@ const Wave = (() => {
   function bindPointerEvents() {
     // window-level, not canvas-level: mouse/touch events still bubble up to
     // window even when the topmost element under the cursor is a button
-    // (crossfader, mute, theme toggle), so the distortion field stays live
+    // (entry hint, mute, theme toggle), so the distortion field stays live
     // over UI.
     window.addEventListener('mousemove', (e) => setPointer('mouse', e.clientX, e.clientY));
     window.addEventListener('mouseleave', () => clearPointer('mouse'));
@@ -972,10 +941,10 @@ const Wave = (() => {
   // wave should barely move, not breathe at full amplitude.
   const SLEEP_SCALE = 0.12;
 
-  // Crossfader spec: at full booking (mix=1) the wave doesn't disappear, it
-  // recedes to a dim, quiet backdrop behind the readable panel — same idea
-  // as SLEEP_SCALE, just the *other* end of a live, scrubbable axis instead
-  // of a one-time pre-interaction state.
+  // Settled spec: once the reveal sequence lands and mix eases to 1, the
+  // wave doesn't disappear, it recedes to a dim, quiet backdrop behind the
+  // readable panel — same idea as SLEEP_SCALE, just the *other* end of the
+  // mix axis instead of a one-time pre-interaction state.
   const BUSINESS_SCALE = 0.32;
 
   function lerp(a, b, t) {
@@ -1109,10 +1078,11 @@ const Wave = (() => {
   // (which is what happened before: gain sat downstream of the analyser,
   // see AudioEngine.loadBuffer — fixed there, this is the dramatic,
   // guaranteed-instant version of "stop reacting" on top of that fix).
-  // Deliberately independent of the crossfader's mix: dragging toward
-  // booking dims the wave smoothly (see draw()'s BUSINESS_SCALE blend
-  // below), it never triggers this dissolve — that stays a hard,
-  // unambiguous "silenced" signal reserved for the mute button.
+  // Deliberately independent of the settle tween's mix value: easing
+  // toward the settled state dims the wave smoothly (see draw()'s
+  // BUSINESS_SCALE blend below), it never triggers this dissolve — that
+  // stays a hard, unambiguous "silenced" signal reserved for the mute
+  // button.
   // nowTs must be the same clock as the `t` passed to draw() (i.e.
   // performance.now()/rAF timestamps), not an "effective" (possibly
   // reduced-motion-frozen) time — the burst's own duration always runs in
@@ -1149,11 +1119,10 @@ const Wave = (() => {
     spawnAssembleParticles(targetPoints);
   }
 
-  // First-ever wake (main.js's beginExperience(), on the crossfader's or
-  // mobile story's first interaction): the wave has never been drawn
-  // before this, so there's no "last shape" to reassemble into — capture
-  // a fresh target at rest (silent bands, SLEEP_SCALE) instead of reusing
-  // frozenPoints the way resume() does.
+  // First-ever wake (main.js's beginExperience(), on the entry gesture):
+  // the wave has never been drawn before this, so there's no "last shape"
+  // to reassemble into — capture a fresh target at rest (silent bands,
+  // SLEEP_SCALE) instead of reusing frozenPoints the way resume() does.
   function wake(nowTs) {
     if (prefersReducedMotion()) return; // no assemble flourish — draw() just starts live next frame
     beginAssemble(nowTs, capturePoints(0, { bass: 0, mid: 0, high: 0 }, SLEEP_SCALE));
@@ -1296,11 +1265,12 @@ const Wave = (() => {
     // wakeProgress is 0 while sleeping, ramps 0->1 over the wake sequence
     // (Phase 7), and stays 1 once fully awake — the wave visibly unfurls
     // from barely-moving to its mix-appropriate amplitude instead of
-    // snapping. The unfurl's *target* is no longer a flat 1 (Crossfader):
-    // it's lerp(1, BUSINESS_SCALE, mix), so scrubbing the fader before the
-    // wake ramp finishes still lands on the right amplitude, and scrubbing
-    // afterward reshapes the wave live and continuously, with no separate
-    // animation of its own — the crossfader IS the animation from then on.
+    // snapping. The unfurl's *target* isn't a flat 1: it's
+    // lerp(1, BUSINESS_SCALE, mix) — mix stays 0 through the whole wake
+    // ramp (main.js's tweenMixToOne() doesn't start until well after
+    // wakeProgress has already reached 1, see startRevealSequence()), so
+    // in practice the wave unfurls to full amplitude first and only eases
+    // down afterward, but the formula holds either way.
     const wakeTarget = lerp(1, BUSINESS_SCALE, mix);
     const baseGlobalScale = SLEEP_SCALE + (wakeTarget - SLEEP_SCALE) * easeOutExpo(wakeProgress);
     // Rave burst (see triggerRaveBurst) multiplies on top of that
@@ -1343,93 +1313,6 @@ const Wave = (() => {
 })();
 
 /* --------------------------------------------------------------------------
-   Spectrum (Phase 8)
-   -----------------------------------------------------------------------
-   A slim LED-bar frequency strip pinned to the top edge, via the vendored
-   audioMotion-analyzer (vendor/audioMotion-analyzer.js — see
-   vendor/README.md for what's vendored and why). An accent, not a second
-   full analyzer UI: full-octave bands (mode 8 = 10 bars), a single-hue
-   gradient built from the live --color-accent token, background painting
-   turned off (showBgColor/overlay) so the page's own background shows
-   through and only the lit LED segments read.
-
-   Patches into the *existing* Web Audio graph rather than opening a second
-   AudioContext or a second AnalyserNode: connectInput() (called internally
-   by the `source` option) just adds another consumer on AudioEngine's own
-   gainNode (AudioEngine.outputNode) — the same "what's actually audible"
-   tap point the site's own analyser already uses (see loadBuffer()'s
-   comment on gain-before-analyser). connectSpeakers:false matters here:
-   left at its default, audioMotion would also wire its own path to
-   ctx.destination, which would sum with the graph's existing path there
-   and audibly double the volume.
-
-   Desktop-only (mobileMode gate, mirrors Cursor/Magnetic/Orb below) and
-   skipped under reduced motion, matching Wave/AudioEngine's own policy of
-   no ambient motion for those visitors. Fails soft throughout: any
-   construction error (unsupported browser, load issue) is caught and
-   logged, same spirit as AudioEngine's own audioUnavailable path — never
-   thrown into the bootstrap IIFE.
-   -------------------------------------------------------------------------- */
-const Spectrum = (() => {
-  let instance = null;
-  const GRADIENT_NAME = 'diskevich';
-
-  function readAccent() {
-    return getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim() || '#c97a3d';
-  }
-
-  // Re-registering an already-selected gradient regenerates it in place
-  // (audioMotion-analyzer's own registerGradient behavior) — safe to call
-  // any time, including from the theme-toggle handler.
-  function registerBrandGradient() {
-    if (!instance) return;
-    instance.registerGradient(GRADIENT_NAME, { colorStops: [readAccent()] });
-  }
-
-  function refreshColors() {
-    registerBrandGradient();
-  }
-
-  function pause() {
-    if (instance) instance.toggleAnalyzer(false);
-  }
-
-  function resume() {
-    if (instance) instance.toggleAnalyzer(true);
-  }
-
-  async function init() {
-    if (mobileMode || prefersReducedMotion()) return;
-    const container = document.getElementById('spectrum-container');
-    if (!container) return;
-    try {
-      await AudioEngine.preload(); // memoized — safe alongside main.js's own preload kick-off
-      const node = AudioEngine.outputNode;
-      if (!node) return; // AudioEngine.audioUnavailable path — nothing to visualize
-      instance = new AudioMotionAnalyzer(container, {
-        source: node,
-        connectSpeakers: false,
-        height: 64,
-        mode: 8, // full-octave bands — few, deliberate bars rather than a dense wall
-        ledBars: true,
-        showScaleX: false,
-        showPeaks: true,
-        showBgColor: false,
-        overlay: true,
-        smoothing: 0.7,
-      });
-      registerBrandGradient();
-      instance.gradient = GRADIENT_NAME;
-    } catch (err) {
-      console.warn('[diskevich] Spectrum: audioMotion-analyzer unavailable, skipping the spectrum accent.', err);
-      instance = null;
-    }
-  }
-
-  return { init, refreshColors, pause, resume };
-})();
-
-/* --------------------------------------------------------------------------
    Orb (Phase 8)
    -----------------------------------------------------------------------
    A soft, bass-deforming background glow behind the wave — Three.js + a
@@ -1442,13 +1325,13 @@ const Spectrum = (() => {
    classic 3D simplex noise function (Ashima Arts / Stefan Gustavson's
    widely-used public implementation, MIT-licensed, hand-copied inline —
    small enough that vendoring a whole noise library for it isn't worth a
-   third dependency) combined with the live uBass uniform. Fragment shader
+   second dependency) combined with the live uBass uniform. Fragment shader
    adds a Fresnel rim term tinted with the same --color-accent token Wave
-   and Spectrum read, so all three accents stay visually in sync.
+   reads, so both accents stay visually in sync.
 
    No GSAP: AudioEngine.bands is already the exact EMA-smoothed "inertia"
    a tween library would add on top, so uBass is fed straight from it.
-   Desktop-only + reduced-motion-gated (mirrors Cursor/Magnetic/Spectrum)
+   Desktop-only + reduced-motion-gated (mirrors Cursor/Magnetic)
    and fails soft if a WebGL context can't be obtained at all — never
    throws into the bootstrap IIFE. Rendered from inside the existing
    frameLoop() (see render(), called next to Wave.draw()) rather than a
@@ -1689,7 +1572,7 @@ const Orb = (() => {
    A small dot that follows the pointer and grows into a ring over anything
    clickable — reinforces "this is interactive" precisely where the design
    otherwise has almost no conventional affordances (no buttons-that-look-
-   like-buttons, no underlines except the crossfader/social links). Fine-
+   like-buttons, no underlines except the dates-trigger/social links). Fine-
    pointer devices only: touch has no hover state and the OS cursor is
    already correct there, so this stays out of mobileMode's way entirely.
    Position updates via CSS transform (compositor-only, not layout) with a
@@ -1725,15 +1608,11 @@ const Cursor = (() => {
    Magnetic
    -----------------------------------------------------------------------
    Extends the wave's own "things lean toward the pointer" language to the
-   rest of the interface: the mute/theme toggles, the social-link icons, and
-   the crossfader's own "artist"/"booking" labels nudge a few px toward a
-   nearby cursor instead of sitting inert until directly hovered. Desktop/
-   fine-pointer only, same gate as Cursor — there's no "nearby" on a
-   touchscreen. Deliberately does NOT include #crossfader-input itself: a
-   magnetic pull on the element currently being dragged would fight its own
-   hit-testing frame to frame (the pointer moves, the element chases it,
-   which changes the very distance the pull is computed from). Pointer-only
-   by design: a keyboard-focused element must never carry a stale
+   rest of the interface: the mute/theme toggles, the social-link icons,
+   and the dates-trigger link ([data-magnetic] on each) nudge a few px
+   toward a nearby cursor instead of sitting inert until directly hovered.
+   Desktop/fine-pointer only, same gate as Cursor — there's no "nearby" on
+   a touchscreen. Pointer-only by design: a keyboard-focused element must never carry a stale
    mouse-driven offset, so focusin explicitly resets it (this is also why
    the pull itself is plain CSS transform + transition rather than a JS
    spring loop like the wave's — a keyframe-free transition is trivial to
@@ -1816,16 +1695,19 @@ const Magnetic = (() => {
 (() => {
   const body = document.body;
   const html = document.documentElement;
-  const crossfaderInput = document.getElementById('crossfader-input');
   const deckBPanel = document.getElementById('deck-b-panel');
   const muteToggle = document.getElementById('mute-toggle');
   const themeToggle = document.getElementById('theme-toggle');
+  const entryHint = document.getElementById('entry-hint');
+  const datesTrigger = document.getElementById('dates-trigger');
+  const datesDialog = document.getElementById('dates-dialog');
+  const datesDialogClose = document.getElementById('dates-dialog-close');
 
   // Start loading/generating audio once the page has painted and settled
   // (Phase 6: keeps the — possibly chunky, especially for the synthetic
   // placeholder loop — decode/generate work off the critical initial-paint
   // path) rather than at parse time, but still well ahead of the first
-  // fader interaction so the wake moment has no perceptible lag.
+  // interaction so the wake moment has no perceptible lag.
   const kickOffAudioPreload = () => {
     if ('requestIdleCallback' in window) {
       requestIdleCallback(() => AudioEngine.preload(), { timeout: 2000 });
@@ -1840,7 +1722,6 @@ const Magnetic = (() => {
   }
 
   Wave.init();
-  Spectrum.init(); // no-ops internally on mobile / reduced-motion / load failure
   Orb.init(); // no-ops internally on mobile / reduced-motion / no WebGL
   Cursor.init();
   Magnetic.init();
@@ -1864,61 +1745,79 @@ const Magnetic = (() => {
   let wakeStartTs = null;
 
   /* --------------------------------------------------------------------
-     Crossfader / Mobile story — shared mix engine
+     Reveal & settle — the site's one continuous "mix" value
      -----------------------------------------------------------------
-     One continuous mix, 0 (full artist) to 1 (full booking), drives both
-     AudioEngine's gain and Wave's amplitude — see AudioEngine.setMix() and
-     Wave.draw()'s BUSINESS_SCALE blend. Desktop feeds it from the
-     crossfader's drag position (below); the mobile story (further below)
-     feeds the exact same function from scroll progress instead — the
-     underlying blend is identical, only the input gesture differs per
-     breakpoint. Which one a visitor can actually reach is entirely CSS's
-     job (style.css's mobile-story media query mirrors main.js's own
-     mobileMode boundary) — both sets of listeners stay wired unconditionally
-     here, since whichever container is display:none simply never receives
-     real events, no runtime branching needed.
-     applyMix() also doubles as the entry gesture's payload: unlocking
-     audio and starting the wake-unfurl ramp — see beginExperience(), used
-     by both the crossfader's first pointerdown/keydown and the mobile
-     story's tap-hint/first touch.
+     --mix (0..1) drives the legibility scrim, the orb's fade, and Wave's
+     amplitude ceiling (see style.css and Wave.draw()'s BUSINESS_SCALE
+     blend) — same three consumers the old crossfader drove, but no longer
+     scrubbed by a drag/scroll gesture. It's a one-shot value now: 0 while
+     the wave is fully awake and energetic, tweened up to 1 by
+     tweenMixToOne() once startRevealSequence() (below) has finished
+     staggering the wordmark/bio/links in, so the wave visibly settles
+     down right as the text finishes landing.
      -------------------------------------------------------------------- */
-  const REVEAL_THRESHOLD = 0.08; // below this, deck-b-panel is inert/hidden from AT — matches where it's visually still unreadable
   let mix = 0;
   let entryStarted = false;
 
-  function applyMix(value) {
+  function setMixVisual(value) {
     mix = value;
-    // Single continuous parameter drives the panel's own CSS (opacity /
-    // transform bound to var(--mix) in style.css) — no JS-computed
-    // styles, no discrete thresholds for *appearance*. inert/aria-hidden
-    // are the one place a threshold is unavoidable: screen readers have no
-    // concept of "38% visible", so they get the panel exactly when it's
-    // become meaningfully legible to sighted visitors. (On mobile
-    // #deck-b-panel is display:none regardless — this still runs
-    // harmlessly, just with no visible effect there.)
     html.style.setProperty('--mix', mix.toFixed(4));
-    const revealed = mix >= REVEAL_THRESHOLD;
-    if (revealed) {
-      deckBPanel.removeAttribute('inert');
-      deckBPanel.setAttribute('aria-hidden', 'false');
-    } else {
-      // An element can't hold focus once it's inert; if a keyboard user had
-      // tabbed into a dates/social link and then scrubbed back past the
-      // threshold, blur first so focus doesn't get silently stranded
-      // inside a now-inert subtree.
-      if (deckBPanel.contains(document.activeElement)) {
-        document.activeElement.blur();
-      }
-      deckBPanel.setAttribute('aria-hidden', 'true');
-      deckBPanel.setAttribute('inert', '');
-    }
-    AudioEngine.setMix(mix);
   }
-  applyMix(0); // sync --mix/AudioEngine with the range input's own default value
+
+  function easeOutExpo(x) {
+    return x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+  }
+
+  const MIX_TWEEN_DURATION_MS = 1800; // a touch longer than WAKE_DURATION_MS — settling reads as unhurried, not rushed
+
+  function tweenMixToOne() {
+    if (prefersReducedMotion()) {
+      setMixVisual(1);
+      return;
+    }
+    const startMix = mix;
+    const startTs = performance.now();
+    function tick(ts) {
+      const t = Math.min(1, (ts - startTs) / MIX_TWEEN_DURATION_MS);
+      setMixVisual(startMix + (1 - startMix) * easeOutExpo(t));
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  const REVEAL_GROUP_SELECTORS = ['.mark', '.bio-text', '.links-group'];
+  const REVEAL_STEP_DELAY_MS = 700; // comfortably longer than each fade's own --dur-medium
+  const MIX_TWEEN_DELAY_MS = 500; // one beat of stillness after the last group lands, before the wave starts settling
+
+  // Staggers the wordmark, bio, and links in one at a time, then hands off
+  // to tweenMixToOne() once they've all landed. Called once, from
+  // beginExperience() below.
+  function startRevealSequence() {
+    const groups = REVEAL_GROUP_SELECTORS.map((sel) => deckBPanel.querySelector(sel)).filter(Boolean);
+
+    // Flip once, here, not per child — the panel becomes meaningfully
+    // present the moment the sequence begins and never goes back (there's
+    // no drag gesture left that could scrub it back below some threshold).
+    deckBPanel.removeAttribute('inert');
+    deckBPanel.setAttribute('aria-hidden', 'false');
+
+    if (prefersReducedMotion()) {
+      groups.forEach((el) => el.classList.add('is-revealed'));
+      tweenMixToOne();
+      return;
+    }
+
+    groups.forEach((el, i) => {
+      setTimeout(() => el.classList.add('is-revealed'), WAKE_DURATION_MS + i * REVEAL_STEP_DELAY_MS);
+    });
+    const lastStepStart = WAKE_DURATION_MS + (groups.length - 1) * REVEAL_STEP_DELAY_MS;
+    setTimeout(tweenMixToOne, lastStepStart + MIX_TWEEN_DELAY_MS);
+  }
 
   async function beginExperience() {
     if (entryStarted) return;
     entryStarted = true;
+    entryHint.disabled = true;
     // Must be the very first thing that happens, synchronously, before any
     // await — see AudioEngine.unlock()'s own comment for why.
     if (!prefersReducedMotion()) {
@@ -1932,7 +1831,7 @@ const Magnetic = (() => {
     // just snapping into existence. No-ops under reduced motion (see
     // Wave.wake()'s own check) — the very next frame just starts live.
     // Own try/catch, deliberately separate from AudioEngine.start() below:
-    // this function is async and never awaited by its click/touchstart
+    // this function is async and never awaited by its click/pointerdown
     // caller, so an uncaught throw here would silently reject the whole
     // function's promise and skip everything after it — including
     // starting the actual music, which matters far more than the visual
@@ -1942,6 +1841,11 @@ const Magnetic = (() => {
     } catch (err) {
       console.error('[diskevich] Wave.wake() threw — audio still starts below.', err);
     }
+    // Self-scheduled off WAKE_DURATION_MS rather than chained onto
+    // AudioEngine.start()'s promise below — that promise resolves once
+    // playback *starts*, not once the fade-in ramp has *finished*, so it's
+    // not a reliable "the wake moment is visually complete" signal.
+    startRevealSequence();
     // Reduced motion (Phase 6): leave the sleeping state, but don't start
     // audio — nothing here should autoplay for these visitors.
     if (!prefersReducedMotion()) {
@@ -1949,72 +1853,28 @@ const Magnetic = (() => {
     }
   }
 
-  // pointerdown covers mouse drag and touch; keydown covers a keyboard user
-  // tabbing to the fader and pressing an arrow key without ever pointing at
-  // it. Both are idempotent via entryStarted, so whichever fires first
-  // wins and the other is a no-op.
-  crossfaderInput.addEventListener('pointerdown', beginExperience);
-  crossfaderInput.addEventListener('keydown', beginExperience);
-  crossfaderInput.addEventListener('input', () => {
-    applyMix(Number(crossfaderInput.value) / 100);
+  // The site's only entry gesture: tap/click anywhere. #entry-hint is the
+  // accessible, keyboard-reachable version — a real <button>, so Enter/
+  // Space fire its native click, no separate keydown handler needed. The
+  // page-wide pointerdown/touchstart listeners are the fallback for a tap
+  // landing anywhere else. All three call the same idempotent
+  // beginExperience(), so whichever fires first wins. Clicking the
+  // always-visible theme toggle while still asleep will, correctly, both
+  // flip the theme *and* trigger entry — that's the intended reading of
+  // "tap anywhere", not a bug to special-case around.
+  entryHint.addEventListener('click', beginExperience);
+  window.addEventListener('pointerdown', beginExperience, { once: true });
+  window.addEventListener('touchstart', beginExperience, { passive: true, once: true });
+
+  // Tour dates dialog. Native <dialog>/showModal() handles focus-trapping
+  // and Esc-to-close on its own — the only custom bit needed is closing on
+  // a backdrop click, i.e. a click landing on the dialog element itself
+  // (its box extends out to the backdrop) rather than on anything inside it.
+  datesTrigger.addEventListener('click', () => datesDialog.showModal());
+  datesDialogClose.addEventListener('click', () => datesDialog.close());
+  datesDialog.addEventListener('click', (e) => {
+    if (e.target === datesDialog) datesDialog.close();
   });
-
-  /* --------------------------------------------------------------------
-     Mobile story
-     -----------------------------------------------------------------
-     mix here tracks scroll progress through #mobile-story (0 at the hero,
-     1 at the finale) instead of a drag position, feeding the exact same
-     applyMix() the crossfader uses above. The tap-hint button is the entry
-     gesture (mirrors the crossfader's pointerdown/keydown); a first
-     touchstart on the story container itself is a fallback for a visitor
-     who scrolls straight past it without tapping — both call the same
-     idempotent beginExperience().
-     -------------------------------------------------------------------- */
-  const mobileStory = document.getElementById('mobile-story');
-  const storyTapHint = document.getElementById('story-tap-hint');
-  const storySteps = Array.from(document.querySelectorAll('.story-step'));
-
-  storyTapHint.addEventListener('click', beginExperience);
-  mobileStory.addEventListener('touchstart', beginExperience, { passive: true, once: true });
-
-  let storyScrollPending = false;
-  function onStoryScroll() {
-    // rAF-throttled like the frame loop below — 'scroll' can fire far more
-    // often than once per frame on some devices, and applyMix()'s DOM
-    // writes (a custom property + attribute toggles) don't need to run
-    // more often than the screen can actually redraw.
-    if (storyScrollPending) return;
-    storyScrollPending = true;
-    requestAnimationFrame(() => {
-      storyScrollPending = false;
-      const scrollable = mobileStory.scrollHeight - mobileStory.clientHeight;
-      const progress = scrollable > 0 ? mobileStory.scrollTop / scrollable : 0;
-      applyMix(Math.min(1, Math.max(0, progress)));
-    });
-  }
-  mobileStory.addEventListener('scroll', onStoryScroll, { passive: true });
-
-  // Per-step entrance: each .story-step fades/rises in as it's scrolled to,
-  // independent of the continuous mix value above (which only drives
-  // audio/wave, not step reveal timing) — see .story-step--visible in
-  // style.css. root: mobileStory, not the viewport, since the story
-  // scrolls inside its own container rather than the page.
-  if ('IntersectionObserver' in window) {
-    const stepObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          entry.target.classList.toggle('story-step--visible', entry.isIntersecting);
-        });
-      },
-      { root: mobileStory, threshold: 0.5 }
-    );
-    storySteps.forEach((step) => stepObserver.observe(step));
-  } else {
-    // No IntersectionObserver (very old browser): show everything rather
-    // than leaving every step permanently at opacity 0 with no way to
-    // reveal it.
-    storySteps.forEach((step) => step.classList.add('story-step--visible'));
-  }
 
   muteToggle.addEventListener('click', () => {
     const muted = AudioEngine.toggleMute();
@@ -2053,10 +1913,9 @@ const Magnetic = (() => {
       // Private browsing / storage disabled: theme still applies for this
       // session, it just won't persist across visits.
     }
-    // --color-fg / --color-accent just changed; Wave/Spectrum/Orb all
-    // cached them at init and only re-read on demand, not every frame.
+    // --color-fg / --color-accent just changed; Wave/Orb both cached them
+    // at init and only re-read on demand, not every frame.
     Wave.refreshColors();
-    Spectrum.refreshColors();
     Orb.refreshColors();
   });
 
@@ -2102,7 +1961,7 @@ const Magnetic = (() => {
 
   // Dev/debug access, zero runtime cost otherwise: window.diskevichAudio.bands
   // for live bass/mid/high, window.diskevichDebug.mobileMode / .mix to check
-  // which branch is active and the current crossfader position. (The old DJ_DEBUG
+  // which branch is active and the current settle progress. (The old DJ_DEBUG
   // console logger and on-screen fps meter were removed in Phase 6.)
   window.diskevichAudio = AudioEngine;
   window.diskevichDebug = {
@@ -2146,7 +2005,7 @@ const Magnetic = (() => {
     lastSleepDrawTs = ts;
 
     // Wake sequence (Phase 7): 0 while sleeping, ramps 0->1 over
-    // WAKE_DURATION_MS once the crossfader is first touched, 1 once fully
+    // WAKE_DURATION_MS once entry is first triggered, 1 once fully
     // awake. Reduced motion jumps straight to the end state instead of
     // animating the ramp — a static wave shouldn't spend 1.5s visibly
     // growing its own amplitude, that's still ambient motion, just a
@@ -2184,8 +2043,8 @@ const Magnetic = (() => {
       }
     }
 
-    // Phase 8: micro-VU pulse (style.css's .mute-toggle / crossfader thumb
-    // rules read this). Only while awake — bands are naturally silent
+    // Phase 8: micro-VU pulse (style.css's .mute-toggle rule reads this).
+    // Only while awake — bands are naturally silent
     // beforehand anyway, so there's nothing meaningful to write. Mute-aware
     // for free: gain sits before the analyser (see AudioEngine.loadBuffer()),
     // so bands.bass already decays toward 0 on mute without any special-
@@ -2224,14 +2083,8 @@ const Magnetic = (() => {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopLoop();
-      // Orb's own render() is already covered by stopLoop() above (it's
-      // called from inside frameLoop) — Spectrum keeps an independent rAF
-      // loop internal to audioMotion-analyzer, so it needs its own
-      // pause/resume pair here.
-      Spectrum.pause();
     } else {
       startLoop();
-      Spectrum.resume();
       // iOS can suspend an already-unlocked AudioContext during
       // backgrounding with no event of its own to say so — see
       // AudioEngine.resumeIfSuspended()'s own comment. No-op if the
