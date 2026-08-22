@@ -199,6 +199,68 @@ h2 {
   display: block;
 }
 
+/* ---- Orb (Phase 8) ----
+   Three.js + GLSL background accent — see main.js's Orb module. One layer
+   below #wave-canvas (z-index 0 vs 1) so it always reads as a soft glow
+   behind the wave line, never on top of it. Fades with the same --mix the
+   deck-b-panel/scrim already use (fully present in "artist" mode, gone by
+   "booking") — no JS needed for the fade itself. Orb.init() no-ops on
+   mobile / reduced-motion / no-WebGL, so this simply stays an empty,
+   invisible canvas in those cases. */
+#orb-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: calc(1 - var(--mix, 0));
+  transition: opacity var(--dur-instant) linear;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  #orb-canvas {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #orb-canvas {
+    display: none;
+  }
+}
+
+/* ---- Spectrum (Phase 8) ----
+   audioMotion-analyzer LED-bar strip — see main.js's Spectrum module. A
+   slim accent pinned to the top edge rather than a full analyzer panel, so
+   it reads as a level-meter detail rather than competing with the wave for
+   attention. Same fade-with-mix idiom as everything else here; hidden on
+   mobile (Spectrum.init() itself also skips instantiating there, so this is
+   belt-and-suspenders) and under reduced motion. */
+#spectrum-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: 64px;
+  pointer-events: none;
+  opacity: calc(0.6 * (1 - var(--mix, 0)));
+  transition: opacity var(--dur-instant) linear;
+}
+
+@media (max-width: 768px), (pointer: coarse) {
+  #spectrum-container {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #spectrum-container {
+    display: none;
+  }
+}
+
 .grain {
   position: fixed;
   inset: 0;
@@ -959,6 +1021,42 @@ body[data-state='awake'] .mute-toggle {
 .mute-toggle:hover,
 .mute-toggle:focus-visible {
   border-color: var(--color-accent);
+}
+
+/* ---- Micro-VU pulse (Phase 8) ----
+   Cheapest of the three new accents, and the one that needs no vendored
+   library at all: main.js's frameLoop() writes --band-bass (0..1, already
+   EMA-smoothed by AudioEngine) on <html> once per frame while awake — same
+   idiom as --mix. box-shadow only, deliberately no transform: .mute-toggle
+   carries [data-magnetic], and Magnetic (main.js) writes el.style.transform
+   directly on every registered element on every mousemove frame — an inline
+   style that would silently win over any transform declared here, so a
+   scale-based pulse would almost never actually be visible. box-shadow has
+   no such conflict. Falls back to 0 via the var() default whenever the
+   writer stops (sleeping, muted — see AudioEngine's "gain before analyser"
+   comment for why muting already decays this to 0 on its own — or reduced
+   motion, guarded below). */
+.mute-toggle {
+  box-shadow: 0 0 0 calc(var(--band-bass, 0) * 10px) var(--color-accent-dim);
+}
+
+.crossfader-input::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px var(--color-line), 0 0 calc(var(--band-bass, 0) * 12px) var(--color-accent-soft);
+}
+
+.crossfader-input::-moz-range-thumb {
+  box-shadow: 0 0 0 1px var(--color-line), 0 0 calc(var(--band-bass, 0) * 12px) var(--color-accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mute-toggle {
+    box-shadow: none;
+  }
+
+  .crossfader-input::-webkit-slider-thumb,
+  .crossfader-input::-moz-range-thumb {
+    box-shadow: 0 0 0 1px var(--color-line);
+  }
 }
 
 .mute-toggle:focus-visible {
