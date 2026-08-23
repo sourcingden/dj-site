@@ -197,10 +197,12 @@ h2 {
    Three.js + GLSL background accent — see main.js's Orb module. One layer
    below #wave-canvas (z-index 0 vs 1) so it always reads as a soft glow
    behind the wave line, never on top of it. Fades with the same --mix the
-   scrim uses (fully present while the wave is awake, gone once the reveal
-   sequence settles it) — no JS needed for the fade itself. Orb.init()
-   no-ops on mobile / reduced-motion / no-WebGL, so this simply stays an
-   empty, invisible canvas in those cases. */
+   scrim uses, but only down to a dimmed 30% floor once the reveal sequence
+   settles it, never fully gone — the audio-reactive glow stays a constant,
+   visible presence, just quieter, matching the wave's own floor-not-zero
+   amplitude. No JS needed for the fade itself. Orb.init() no-ops on mobile
+   / reduced-motion / no-WebGL, so this simply stays an empty, invisible
+   canvas in those cases. */
 #orb-canvas {
   position: fixed;
   inset: 0;
@@ -208,7 +210,7 @@ h2 {
   width: 100%;
   height: 100%;
   display: block;
-  opacity: calc(1 - var(--mix, 0));
+  opacity: calc(1 - var(--mix, 0) * 0.7);
   transition: opacity var(--dur-instant) linear;
 }
 
@@ -301,22 +303,24 @@ body.has-custom-cursor * {
    down), and a scrim nested inside any one of them would only ever back
    that one piece of text, not the panel as a whole. Living on .scene
    instead, its own opacity ramps up as the settle tween (main.js's
-   tweenMixToOne()) pushes --mix toward 1 — by roughly mix=0.45
-   (`min(1, mix * 2.2)`) it's already fully solid, well before that tween
-   finishes — so whatever text is on screen by then is sitting on a flat,
-   opaque backdrop rather than fading in over a half-lit wave. Fixed +
-   full-viewport rather than shaped to the panel's bounds: simpler, and
-   correct either way since it's inert (pointer-events: none) and
-   z-index: -1 within .scene's own stacking context keeps it under the
-   panel but still above the wave canvas (.scene itself is z-index 2,
-   above the canvas's z-index 1). */
+   tweenMixToOne()) pushes --mix toward 1 — by roughly mix=0.46
+   (`min(0.55, mix * 1.2)`) it hits its 0.55 ceiling, at about the same
+   --mix point the old formula used to reach full opacity, so the timing of
+   "text becomes readable" is unchanged. Capped well below 1 on purpose:
+   the panel reads as a clear resting backdrop for the text, but the wave's
+   line and glow underneath stay visibly present through it rather than
+   fully obscured. Fixed + full-viewport rather than shaped to the panel's
+   bounds: simpler, and correct either way since it's inert (pointer-events:
+   none) and z-index: -1 within .scene's own stacking context keeps it
+   under the panel but still above the wave canvas (.scene itself is
+   z-index 2, above the canvas's z-index 1). */
 .scene::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -1;
   background: var(--color-overlay-bg);
-  opacity: calc(min(1, var(--mix, 0) * 2.2));
+  opacity: calc(min(0.55, var(--mix, 0) * 1.2));
   pointer-events: none;
   transition: opacity var(--dur-instant) linear;
 }
