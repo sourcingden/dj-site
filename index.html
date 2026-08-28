@@ -6,15 +6,8 @@
   <title>diskevich</title>
   <meta name="description" content="diskevich — rare groove is not a genre. It's a grudge against everything obvious. Where the unfamiliar becomes physical." />
 
-  <!-- Inline SVG favicon: same wave motif as the site itself, zero extra
-       request, and it still reads clearly at 16px (checked). -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22%230a0a0a%22/%3E%3Cpath%20d%3D%22M3%2018c2.5-7%205.5-7%208%200s5.5%207%208%200%205.5-7%208%200%22%20fill%3D%22none%22%20stroke%3D%22%23c97a3d%22%20stroke-width%3D%222.6%22%20stroke-linecap%3D%22round%22/%3E%3C/svg%3E" />
 
-  <!-- Open Graph / Twitter card. og-image.jpg is a static 1200x630 render
-       of the same name+wave composition as the live site (including the
-       same mix-blend-mode cut-through), so a shared link looks like the
-       real thing rather than a generic card. og:url is intentionally
-       omitted — the site has no deploy domain yet; set it once it does. -->
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="diskevich" />
   <meta property="og:title" content="diskevich" />
@@ -27,21 +20,19 @@
   <meta name="twitter:description" content="rare groove is not a genre. It's a grudge against everything obvious." />
   <meta name="twitter:image" content="og-image.jpg" />
 
-  <!-- Single external request: display typeface, swap so first paint never blocks on it -->
+  <!-- The GATE portrait is the LCP element — preload it at the size a
+       phone actually needs. If portrait-640.jpg isn't present yet (see
+       vendor/README.md-style note in the repo root), the <picture>'s plain
+       <img> fallback below simply 404s quietly and the CSS gradient scrim
+       still reads fine as a background on its own. -->
+  <link rel="preload" as="image" href="portrait-960.jpg" imagesrcset="portrait-640.jpg 640w, portrait-960.jpg 960w, portrait-1280.jpg 1280w" fetchpriority="high" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500;700;900&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="style.css" />
 
-  <!-- Sets data-theme before first paint (saved choice, else dark by
-       default — the system's own light/dark preference is deliberately
-       not consulted here, so every first-time visitor lands on dark
-       regardless of OS setting; the toggle in the corner still switches
-       to light and that choice is what gets remembered from then on) so
-       there's no flash of the wrong theme. Inline and synchronous on
-       purpose — style.css keys off this attribute immediately on first
-       render. -->
   <script>
     (function () {
       try {
@@ -56,70 +47,121 @@
 </head>
 <body data-state="sleeping">
 
-  <!-- #orb-canvas sits *below* #wave-canvas (z-index 0 vs 1) so it reads as
-       a soft background glow behind the line, never competing with it. -->
   <canvas id="orb-canvas" aria-hidden="true"></canvas>
   <canvas id="wave-canvas" aria-hidden="true"></canvas>
-  <div class="grain" aria-hidden="true"></div>
 
-  <main class="scene">
-    <!-- Permanent accessible name: the visual wordmark below is aria-hidden
-         and only meaningfully present once the reveal sequence has run, so
-         this is the one thing screen reader users get regardless of where
-         that sequence currently is. -->
-    <h1 class="sr-only">diskevich</h1>
+  <main>
+    <!-- 00 GATE — alive from first paint. The portrait starts
+         "undeveloped" (crushed contrast + heavy grain, see body.is-dropping/
+         is-developed in style.css) and develops on THE DROP, the site's
+         one entry gesture (any tap/click/key/scroll — see main.js's
+         beginExperience()). -->
+    <section class="chapter chapter--gate" id="ch-gate" data-snap aria-labelledby="ch-gate-title">
+      <div class="gate__portrait-wrap">
+        <picture>
+          <source type="image/avif" srcset="portrait-640.avif 640w, portrait-960.avif 960w, portrait-1280.avif 1280w" sizes="100vw" />
+          <source type="image/webp" srcset="portrait-640.webp 640w, portrait-960.webp 960w, portrait-1280.webp 1280w" sizes="100vw" />
+          <img class="gate__portrait" src="portrait-960.jpg" srcset="portrait-640.jpg 640w, portrait-960.jpg 960w, portrait-1280.jpg 1280w" sizes="100vw" alt="" fetchpriority="high" />
+        </picture>
+        <div class="gate-grain" aria-hidden="true"></div>
+      </div>
+      <div class="gate__scrim" aria-hidden="true"></div>
+      <div class="gate__content">
+        <h1 id="ch-gate-title" class="gate__mark">diskevich</h1>
+        <button type="button" class="gate__hint" id="gate-hint">touch it</button>
+      </div>
+    </section>
 
-    <!-- Deck B — the person who signs the contract. Fully in the DOM at all
-         times, but invisible/inert until the reveal sequence begins (see
-         main.js's startRevealSequence()). Its three children (.mark,
-         .bio-text, .links-group) each carry their own independent
-         .is-revealed fade-in, staggered one at a time by that sequence —
-         this element itself is just a plain layout container now, no
-         longer opacity-bound to anything. -->
-    <div class="deck-b-panel" id="deck-b-panel" aria-hidden="true" inert>
-      <div class="mark">
-        <h2 class="artist-name" aria-hidden="true">diskevich</h2>
-        <p class="tagline">rare groove is not a genre. It's a grudge against everything obvious.</p>
+    <!-- 01 NAME -->
+    <section class="chapter chapter--text chapter--name" id="ch-name" data-snap aria-labelledby="ch-name-title">
+      <h2 id="ch-name-title" class="sr-only">diskevich</h2>
+      <div class="wordmark" aria-hidden="true">diskevich</div>
+      <p class="tagline">rare groove is not a genre. It's a grudge against everything obvious.</p>
+    </section>
+
+    <!-- 02 MANIFESTO — pre-split lines, designed breaks (not left to wrap),
+         set in the display font rather than the mono stack (see style.css's
+         own note on why). -->
+    <section class="chapter chapter--text chapter--manifesto" id="ch-manifesto" aria-labelledby="ch-manifesto-title">
+      <h2 id="ch-manifesto-title" class="sr-only">manifesto</h2>
+      <p class="manifesto-line">rare groove<br />is not a genre.</p>
+      <p class="manifesto-line">it's a grudge against<br />everything obvious.</p>
+      <p class="manifesto-line">where the unfamiliar<br />becomes physical.</p>
+      <p class="manifesto-line">every groove is an answer<br />your body gives<br />before your brain does.</p>
+    </section>
+
+    <!-- 03 WHO — the portrait under a dark veil canvas; the finger wipes
+         it away, it heals back over ~2s (see main.js). -->
+    <section class="chapter chapter--text chapter--who" id="ch-who" data-snap aria-labelledby="ch-who-title">
+      <h2 id="ch-who-title" class="sr-only">who</h2>
+      <div class="who-stage">
+        <img class="who-portrait" src="portrait-960.jpg" srcset="portrait-640.jpg 640w, portrait-960.jpg 960w, portrait-1280.jpg 1280w" sizes="80vw" alt="A black-and-white portrait of diskevich" loading="lazy" />
+        <canvas class="who-veil" aria-hidden="true"></canvas>
+        <span class="who-hint" aria-hidden="true">wipe to reveal</span>
       </div>
       <p class="bio-text">Where the unfamiliar becomes physical. Every track a question, every groove an answer your body gives before your brain does.</p>
-      <div class="links-group">
-        <div class="social-links">
-          <a class="social-link" href="https://t.me/sourcingdenis" target="_blank" rel="noopener noreferrer" data-magnetic>
-            <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="21" y1="3" x2="10.5" y2="13.5" />
-              <polygon points="21 3 14.5 21 10.5 13.5 3 9.5 21 3" />
-            </svg>
-            <span class="social-label">telegram</span>
-          </a>
-          <a class="social-link" href="https://www.instagram.com/__diskevich" target="_blank" rel="noopener noreferrer" data-magnetic>
-            <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="5" />
-              <circle cx="12" cy="12" r="4.2" />
-              <circle cx="17.3" cy="6.7" r="0.9" fill="currentColor" stroke="none" />
-            </svg>
-            <span class="social-label">instagram</span>
-          </a>
-          <a class="social-link" href="https://soundcloud.com/diskevich" target="_blank" rel="noopener noreferrer" data-magnetic>
-            <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M17.5 17.5H9a6 6 0 1 1 5.6-8.2h.9a3.6 3.6 0 1 1 0 7.2z" />
-              <path d="M6.5 14v2M9 12.5v3.5M11.5 11.5v4.5M14 12.5v3.5" stroke-width="1.4" />
-            </svg>
-            <span class="social-label">soundcloud</span>
-          </a>
-        </div>
-        <button type="button" class="dates-trigger" id="dates-trigger" data-magnetic>tour dates</button>
+    </section>
+
+    <!-- 04 INSTRUMENT — full-screen, nothing else. The ONLY place
+         touch-action:none applies (see style.css's .wave-stage). -->
+    <section class="chapter chapter--instrument" id="ch-instrument" data-snap aria-labelledby="ch-instrument-title">
+      <h2 id="ch-instrument-title" class="sr-only">the instrument — touch, drag and scratch the wave</h2>
+      <div class="wave-stage" aria-hidden="true"></div>
+      <button type="button" class="tilt-toggle" id="tilt-toggle" aria-pressed="false">tilt to lean</button>
+      <span class="instrument-hint" aria-hidden="true">touch · drag · scratch · hold</span>
+    </section>
+
+    <!-- 05 DATES -->
+    <section class="chapter chapter--text chapter--dates" id="ch-dates" aria-labelledby="ch-dates-title">
+      <h2 id="ch-dates-title" class="sr-only">tour dates</h2>
+      <ul class="dates-list">
+        <li><span class="date-day">13.09.2026</span><span class="date-venue">Torchyn, Bruxt</span></li>
+        <li><span class="date-day">03.10.2026</span><span class="date-venue">OPIK w/ Closer</span></li>
+      </ul>
+    </section>
+
+    <!-- 06 LISTEN — a lazy SoundCloud facade (zero bytes until tapped) +
+         the three social links, full-width in the thumb zone. -->
+    <section class="chapter chapter--text chapter--listen" id="ch-listen" aria-labelledby="ch-listen-title">
+      <h2 id="ch-listen-title" class="sr-only">listen</h2>
+      <button type="button" class="listen-facade" id="listen-facade" data-src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/diskevich&color=%23c97a3d&auto_play=true&show_teaser=false">
+        <span>▸ hear the sets</span>
+      </button>
+      <div class="social-links">
+        <a class="social-link" href="https://t.me/sourcingdenis" target="_blank" rel="noopener noreferrer" data-magnetic>
+          <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="21" y1="3" x2="10.5" y2="13.5" />
+            <polygon points="21 3 14.5 21 10.5 13.5 3 9.5 21 3" />
+          </svg>
+          <span class="social-label">telegram</span>
+        </a>
+        <a class="social-link" href="https://www.instagram.com/__diskevich" target="_blank" rel="noopener noreferrer" data-magnetic>
+          <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="5" />
+            <circle cx="12" cy="12" r="4.2" />
+            <circle cx="17.3" cy="6.7" r="0.9" fill="currentColor" stroke="none" />
+          </svg>
+          <span class="social-label">instagram</span>
+        </a>
+        <a class="social-link" href="https://soundcloud.com/diskevich" target="_blank" rel="noopener noreferrer" data-magnetic>
+          <svg class="social-icon" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17.5 17.5H9a6 6 0 1 1 5.6-8.2h.9a3.6 3.6 0 1 1 0 7.2z" />
+            <path d="M6.5 14v2M9 12.5v3.5M11.5 11.5v4.5M14 12.5v3.5" stroke-width="1.4" />
+          </svg>
+          <span class="social-label">soundcloud</span>
+        </a>
       </div>
-    </div>
+    </section>
+  </main>
 
-    <!-- The site's only entry gesture: tap/click anywhere starts the track
-         and the reveal sequence (see main.js's beginExperience()). This
-         button is the accessible, keyboard-reachable version of that same
-         gesture; a page-wide pointerdown/touchstart fallback covers a tap
-         landing anywhere else. Fades out for good once awake. -->
-    <div class="entry-gate" aria-hidden="true">
-      <button type="button" class="entry-hint" id="entry-hint">tap to enter</button>
+  <!-- Bottom rail: replaces the old top-corner mute/theme toggles.
+       Chapter progress dots + a live energy meter (your own input feeding
+       the wave) + theme. -->
+  <nav class="rail" aria-label="Chapters">
+    <div class="rail-dots" id="rail-dots" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
     </div>
-
+    <div class="rail-energy" id="rail-energy" aria-hidden="true"></div>
     <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false" aria-label="Switch theme" data-magnetic>
       <svg class="theme-icon theme-icon--sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="4.5" />
@@ -129,37 +171,26 @@
         <path d="M20.5 14.4A8.5 8.5 0 1 1 9.6 3.5a7 7 0 0 0 10.9 10.9Z" />
       </svg>
     </button>
+  </nav>
 
-    <button type="button" id="mute-toggle" class="mute-toggle" aria-pressed="false" aria-label="Mute audio" data-magnetic>
-      <svg class="mute-icon mute-icon--on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M11 5 6 9H2v6h4l5 4Z" />
-        <path d="M19.1 4.9a10 10 0 0 1 0 14.2M15.5 8.5a5 5 0 0 1 0 7.1" />
-      </svg>
-      <svg class="mute-icon mute-icon--off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M11 5 6 9H2v6h4l5 4Z" />
-        <line x1="23" y1="9" x2="17" y2="15" />
-        <line x1="17" y1="9" x2="23" y2="15" />
-      </svg>
-    </button>
-  </main>
-
-  <!-- Tour dates, opened on demand from the "tour dates" link inside
-       .links-group above. A native <dialog> gets focus-trapping, Esc-to-
-       close and correct aria-modal semantics for free — see main.js for
-       the (very short) showModal()/close() wiring. -->
-  <dialog id="dates-dialog" class="dates-dialog" aria-labelledby="dates-dialog-title">
-    <h2 id="dates-dialog-title" class="dates-dialog-title">tour dates</h2>
-    <ul class="dates-list">
-      <li><span class="date-day">13.09.2026</span><span class="date-venue">Torchyn, Bruxt</span></li>
-      <li><span class="date-day">03.10.2026</span><span class="date-venue">OPIK w/ Closer</span></li>
-    </ul>
-    <button type="button" class="dates-dialog-close" id="dates-dialog-close">close</button>
-  </dialog>
-
-  <!-- type="module" (implicitly deferred) so main.js can import the
-       vendored Three.js build in vendor/ (see main.js's Orb module and
-       vendor/README.md) — everything else in main.js is unaffected, its
-       cross-references are all internal within the one module scope. -->
   <script type="module" src="main.js"></script>
+  <script>
+    // Lazy SoundCloud facade: zero bytes until tapped. A styled poster
+    // swaps in the real iframe on click rather than embedding it from
+    // load, so LISTEN costs nothing until someone actually wants to hear
+    // something — see style.css's .listen-facade[data-loaded] for the
+    // post-swap layout.
+    document.getElementById('listen-facade')?.addEventListener('click', function () {
+      var src = this.dataset.src;
+      var iframe = document.createElement('iframe');
+      iframe.src = src;
+      iframe.allow = 'autoplay';
+      iframe.loading = 'lazy';
+      this.textContent = '';
+      this.appendChild(iframe);
+      this.setAttribute('data-loaded', '');
+      this.disabled = true;
+    });
+  </script>
 </body>
 </html>
