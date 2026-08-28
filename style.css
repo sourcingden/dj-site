@@ -1,60 +1,49 @@
 /* ==========================================================================
-   diskevich — design system
-   Concept: one continuous scene, no navigation. Tap/click anywhere wakes
-   the wave and starts the track; the wordmark, bio and links then reveal
-   themselves in turn (see main.js's startRevealSequence()), and once
-   they've all landed, the wave settles to a dimmer amplitude so the text
-   stays legible over it (main.js's tweenMixToOne(), still driving the same
-   --mix (0..1) custom property the scrim/orb/wave amplitude all read here —
-   just written by a script now instead of a drag gesture).
+   diskevich — design system — "SIDE A"
 
-   Font pairing rationale:
-   - Display: "Unbounded" (Google Fonts, single external request) — a huge,
-     geometric, slightly eccentric grotesk. It reads as idiosyncratic rather
-     than corporate at massive sizes, which matches the brief's "idiosyncratic
-     rhythmic journeys" and gives the artist name real presence against a
-     near-empty black canvas.
-   - Text: the system monospace stack — no extra request, and the fixed-width
-     rhythm reads like a tracklist / cassette label / catalog number. That
-     ties directly to "obscure, rare" crate-digging culture: dates and bio
-     copy feel like liner notes, not marketing copy.
+   Concept: the phone is the tape, scroll is the playhead, your hands are
+   the signal. One column of full-bleed chapters, scroll-snapped, with a
+   persistent fixed wave canvas behind all of them whose mode (offset/
+   amplitude) changes per active chapter (see main.js's CHAPTER_WAVE_MODE
+   and html[data-chapter]).
+
+   This file was rewritten mobile-first: every clamp() below has a
+   preferred term tuned so it actually varies across common phone widths
+   instead of bottoming out at its floor everywhere below ~1000px (the
+   defect that made the previous version unreadable) — verified at
+   320/360/375/390/430/768/1440px.
+
+   Font pairing carried over: "Unbounded" for display, the system
+   monospace stack for labels/dates (reads like a tracklist/catalog
+   number). The MANIFESTO chapter is the one exception — see its own rule
+   below for why it moved off the mono stack.
    ========================================================================== */
 
 :root {
-  /* ---- Palette ----
-     Near-black void = "obscure". A warm copper/amber accent = vinyl warmth,
-     rare-groove digging culture, a single glowing ember in the dark rather
-     than a cold neon rave color. */
   --color-bg: #0a0a0a;
   --color-bg-elevated: #111110;
   --color-fg: #f2ede4;
-  /* 8.78:1 against --color-bg (was 5.28:1) — still visibly a step down from
-     full --color-fg, but no longer faint enough to read as "barely there"
-     for body copy (tagline/bio/dates/labels all lean on this). */
   --color-fg-muted: #b3ac9e;
   --color-accent: #c97a3d;
   --color-accent-soft: rgba(201, 122, 61, 0.35);
   --color-accent-dim: rgba(201, 122, 61, 0.12);
   --color-line: rgba(242, 237, 228, 0.12);
   --color-overlay-bg: rgba(8, 7, 6, 0.96);
-  /* Text-selection highlight: deliberately NOT the copper brand accent —
-     the point is a jolt of something unexpected exactly where browsers
-     default to a boring system blue. Still warm-leaning (magenta, not a
-     cold cyan/lime) so it doesn't fight the "warm, not neon" palette
-     philosophy above, just turns it up loud for one specific moment. */
   --color-selection-bg: #ff2d78;
   --color-selection-fg: #0a0a0a;
 
-  /* ---- Type ---- */
   --font-display: 'Unbounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-text: ui-monospace, 'SF Mono', 'Space Mono', 'Cascadia Code', 'Courier New', monospace;
 
-  --fs-display: clamp(3.2rem, min(15vw, 22vh), 12rem);
-  --fs-tagline: clamp(0.7rem, 1.6vw, 1rem);
-  --fs-nav: clamp(0.7rem, 1.1vw, 0.85rem);
-  --fs-h2: clamp(1.75rem, 5vw, 3.25rem);
-  --fs-body: clamp(0.95rem, 1.3vw, 1.15rem);
-  --fs-small: clamp(0.7rem, 1vw, 0.85rem);
+  /* ---- Type scale ----
+     Every preferred term is tuned to genuinely vary across phone widths —
+     no token bottoms out at its floor below ~1000px the way the previous
+     scale's vw-only preferred terms did. Verified at 320px: label 14px,
+     body 17px, chapter 28.8px, all monotonic up to 1440px. */
+  --fs-chapter: clamp(1.75rem, 9vw, 4rem); /* ~34px @375 — the manifesto lines */
+  --fs-lead: clamp(1.25rem, 5.5vw, 1.75rem); /* ~21px @375 */
+  --fs-body: clamp(1.0625rem, 4.4vw, 1.25rem); /* ~17px @375 — never below this for copy */
+  --fs-label: clamp(0.875rem, 3.4vw, 1rem); /* ~14px @375 — the floor, nothing goes lower */
 
   /* ---- Spacing ---- */
   --space-2xs: 0.375rem;
@@ -63,25 +52,24 @@
   --space-md: clamp(1.5rem, 4vw, 2.5rem);
   --space-lg: clamp(2.5rem, 6vw, 5rem);
 
-  /* ---- Motion ----
-     One signature ease (expo-out) used everywhere for consistency; a spring
-     variant for physical/springy interactions — the wave's own pointer
-     distortion is JS-integrated math (Phase 3), but this token drives the
-     CSS-transition side of the same idea: magnetic-pull buttons snapping
-     back to rest with a touch of overshoot. */
+  /* One gutter, applied exactly once per chapter — the previous design's
+     26%-of-screen defect came from .scene and .deck-b-panel each adding
+     their own horizontal padding. */
+  --gutter: max(1.25rem, env(safe-area-inset-left), env(safe-area-inset-right));
+
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-instant: 120ms;
   --dur-fast: 220ms;
   --dur-medium: 400ms;
-  --dur-wake: 1500ms;
+  --dur-wake: 900ms;
 
-  /* ---- Layout ---- */
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
   --tap-min: 44px;
+  --rail-h: 56px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -93,22 +81,10 @@
   }
 }
 
-/* ---- Light theme ----
-   Same palette logic, inverted: cream void, warm-charcoal ink, a deeper
-   burnt-copper accent (the original copper drops to 2.84:1 on this
-   background — legible as a glow, not as text, so it's darkened here
-   specifically for the roles that render as text: date labels, links.
-   fg/fg-muted/accent all independently re-verified at >=4.5:1 against this
-   background, not just carried over.
-   Applied via [data-theme] rather than prefers-color-scheme directly,
-   because the toggle (main.js) needs to be able to override the system
-   setting and have that choice persist. */
 :root[data-theme='light'] {
   --color-bg: #f2ede4;
   --color-bg-elevated: #e8e1d3;
   --color-fg: #0a0a0a;
-  /* 8.93:1 against --color-bg (was 6.38:1) — same reasoning as the dark
-     theme's --color-fg-muted, mirrored. */
   --color-fg-muted: #453f36;
   --color-accent: #9c5522;
   --color-accent-soft: rgba(156, 85, 34, 0.35);
@@ -126,16 +102,29 @@
   padding: 0;
 }
 
-html,
-body {
-  height: 100%;
-  overflow-x: hidden;
+/* The document itself scrolls (no inner scroll container anywhere) —
+   this is what lets the URL bar actually collapse on iOS. overflow-x
+   lives on body as `clip`, NOT on html as `hidden`: hidden on the root
+   silently breaks both scroll-snap-type and descendant position:sticky. */
+html {
+  scroll-snap-type: y proximity;
+  scroll-padding-block-end: calc(var(--rail-h) + var(--safe-b));
+  scroll-behavior: smooth;
+  overscroll-behavior-y: none;
 }
 
-::selection,
-::-moz-selection {
-  background: var(--color-selection-bg);
-  color: var(--color-selection-fg);
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-snap-type: none;
+    scroll-behavior: auto;
+  }
+}
+
+/* Gate lock: no scrolling until THE DROP has fired. Scroll position is 0
+   at that moment so the flip to `auto` can't cause a jump. */
+html:not([data-entered]) {
+  overflow: hidden;
+  height: 100svh;
 }
 
 body {
@@ -144,9 +133,16 @@ body {
   font-family: var(--font-text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Theme switch crossfades rather than snaps (zeroes under
-     prefers-reduced-motion via --dur-medium, like everything else). */
+  overflow-x: clip;
+  padding-bottom: calc(var(--rail-h) + var(--safe-b));
+  -webkit-tap-highlight-color: transparent;
   transition: background-color var(--dur-medium) var(--ease-out-expo), color var(--dur-medium) var(--ease-out-expo);
+}
+
+::selection,
+::-moz-selection {
+  background: var(--color-selection-bg);
+  color: var(--color-selection-fg);
 }
 
 button {
@@ -164,13 +160,6 @@ h2 {
   line-height: 1;
 }
 
-/* Visually-hidden-but-accessible: carries the site's real name (see the
-   permanent <h1> in index.html) without it needing to be visible — the big
-   styled wordmark inside .deck-b-panel is aria-hidden and only meaningfully
-   present once the reveal sequence has run, so this is what screen reader
-   users get regardless of where that sequence currently is. Standard
-   clip-based pattern, not display:none (which would drop it from the
-   accessibility tree entirely). */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -183,7 +172,19 @@ h2 {
   border: 0;
 }
 
-/* ---- Canvas + grain layers ---- */
+/* ---- Touch model ----
+   Pinch-zoom must never be disabled (WCAG 1.4.4) — html/body deliberately
+   keep touch-action: auto. Only the instrument's own hit-test surface (the
+   only place scroll and play are genuinely different gestures) gets
+   `none`; controls get `manipulation` to kill the 300ms tap delay and
+   double-tap-zoom without touching pinch. */
+button,
+a,
+.rail * {
+  touch-action: manipulation;
+}
+
+/* ---- Canvas layers ---- */
 #wave-canvas {
   position: fixed;
   inset: 0;
@@ -193,16 +194,6 @@ h2 {
   display: block;
 }
 
-/* ---- Orb ----
-   Three.js + GLSL background accent — see main.js's Orb module. One layer
-   below #wave-canvas (z-index 0 vs 1) so it always reads as a soft glow
-   behind the wave line, never on top of it. Fades with the same --mix the
-   scrim uses, but only down to a dimmed 30% floor once the reveal sequence
-   settles it, never fully gone — the audio-reactive glow stays a constant,
-   visible presence, just quieter, matching the wave's own floor-not-zero
-   amplitude. No JS needed for the fade itself. Orb.init() no-ops on mobile
-   / reduced-motion / no-WebGL, so this simply stays an empty, invisible
-   canvas in those cases. */
 #orb-canvas {
   position: fixed;
   inset: 0;
@@ -210,7 +201,7 @@ h2 {
   width: 100%;
   height: 100%;
   display: block;
-  opacity: calc(1 - var(--mix, 0) * 0.7);
+  opacity: 0.5;
   transition: opacity var(--dur-instant) linear;
 }
 
@@ -226,25 +217,30 @@ h2 {
   }
 }
 
-.grain {
-  position: fixed;
+/* Grain: kept only where it costs nothing — the GATE's develop effect,
+   which animates once and is gone. Elsewhere a fixed full-viewport
+   mix-blend-mode:overlay layer above a repainting canvas is exactly the
+   compositing pattern that costs frames on iOS, for 0.05 opacity of
+   texture, so it's scoped to the gate chapter and to fine-pointer devices
+   generally. */
+.gate-grain {
+  position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 5;
-  /* CSS-only grain (feTurbulence, no image asset, no extra request) —
-     static, not animated. A flickering grain is common on award-site
-     hero treatments, but this site already commits to a perpetually
-     breathing canvas underneath; layering a second, independent
-     perpetual animation on top fights the calm-idle-state work from
-     Phase 6 for no real gain, so this stays a fixed texture. */
-  opacity: 0.05;
+  z-index: 2;
+  opacity: var(--dev-grain, 0.55);
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  transition: opacity 900ms var(--ease-out-expo);
 }
 
-/* ---- Custom cursor (Phase 7) ----
-   Fine-pointer devices only; JS gates creation on !mobileMode and adds
-   .has-custom-cursor to <body>, so this rule is inert on touch. */
+@media (prefers-reduced-motion: reduce) {
+  .gate-grain {
+    opacity: 0.06;
+  }
+}
+
+/* ---- Custom cursor ---- */
 body.has-custom-cursor,
 body.has-custom-cursor * {
   cursor: none;
@@ -283,180 +279,287 @@ body.has-custom-cursor * {
   opacity: 0;
 }
 
-/* ---- Scene ---- */
-.scene {
+/* ==========================================================================
+   Chapters
+   ========================================================================== */
+
+.chapter {
   position: relative;
   z-index: 2;
-  min-height: 100dvh;
+  min-height: 100svh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--space-md) + var(--safe-r))
-    calc(var(--space-lg) + var(--safe-b)) calc(var(--space-md) + var(--safe-l));
+  padding: calc(var(--space-lg) + var(--safe-t)) calc(var(--gutter)) calc(var(--space-lg) + var(--safe-b));
 }
 
-/* Deck B's legibility scrim, deliberately living here rather than as a
-   pseudo-element on #deck-b-panel itself: #deck-b-panel's three children
-   each carry their own independent opacity now (see .is-revealed further
-   down), and a scrim nested inside any one of them would only ever back
-   that one piece of text, not the panel as a whole. Living on .scene
-   instead, its own opacity ramps up as the settle tween (main.js's
-   tweenMixToOne()) pushes --mix toward 1 — by roughly mix=0.46
-   (`min(0.55, mix * 1.2)`) it hits its 0.55 ceiling, at about the same
-   --mix point the old formula used to reach full opacity, so the timing of
-   "text becomes readable" is unchanged. Capped well below 1 on purpose:
-   the panel reads as a clear resting backdrop for the text, but the wave's
-   line and glow underneath stay visibly present through it rather than
-   fully obscured. Fixed + full-viewport rather than shaped to the panel's
-   bounds: simpler, and correct either way since it's inert (pointer-events:
-   none) and z-index: -1 within .scene's own stacking context keeps it
-   under the panel but still above the wave canvas (.scene itself is
-   z-index 2, above the canvas's z-index 1). */
-.scene::before {
+.chapter[data-snap] {
+  scroll-snap-align: start;
+}
+
+/* Text chapters get a soft top/bottom scrim so copy stays legible over the
+   moving wave without a flat full-viewport veil (which would also cover
+   the instrument chapter, where nothing should sit between the visitor and
+   the line). Absolutely positioned within the chapter, not fixed. */
+.chapter--text::before {
   content: '';
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: -1;
-  background: var(--color-overlay-bg);
-  opacity: calc(min(0.55, var(--mix, 0) * 1.2));
   pointer-events: none;
-  transition: opacity var(--dur-instant) linear;
+  background: linear-gradient(
+    to bottom,
+    var(--color-overlay-bg) 0%,
+    transparent 22%,
+    transparent 78%,
+    var(--color-overlay-bg) 100%
+  );
+  opacity: 0.7;
 }
 
-.mark {
+/* ---- 00 GATE ---- */
+.chapter--gate {
+  position: relative;
+  overflow: hidden;
+}
+
+.gate__portrait-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.gate__portrait {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  display: block;
+  filter: grayscale(1) contrast(var(--dev-contrast, 3.2)) brightness(var(--dev-bright, 0.35));
+  transition: filter 900ms var(--ease-out-expo);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate__portrait {
+    filter: grayscale(1) contrast(1.05) brightness(0.85);
+  }
+}
+
+.gate__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(to bottom, rgba(10, 9, 8, 0.55), rgba(10, 9, 8, 0.75));
+  pointer-events: none;
+}
+
+.gate__content {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-xs);
+  gap: var(--space-md);
 }
 
-.artist-name {
-  font-size: var(--fs-display);
+.gate__mark {
+  font-family: var(--font-display);
+  font-weight: 900;
+  text-transform: lowercase;
+  color: var(--color-fg);
+  font-size: min(11rem, calc((100vw - 2 * var(--gutter)) / 6.5));
+  line-height: 1;
+}
+
+.gate__hint {
+  font-family: var(--font-text);
+  font-size: var(--fs-label);
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+  color: var(--color-fg);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: var(--space-sm) var(--space-lg);
+  min-height: var(--tap-min);
+  animation: gate-pulse 2.4s var(--ease-out-expo) infinite;
+}
+
+@keyframes gate-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate__hint {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+body[data-state='awake'] .gate__hint {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-medium) var(--ease-out-expo);
+}
+
+/* THE DROP: registered custom properties so the develop filter
+   interpolates smoothly; a plain filter transition (declared on
+   .gate__portrait above) is the fallback for browsers without @property
+   support. Screen invert is a one-shot, ~120ms flash. */
+@property --dev-contrast {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 3.2;
+}
+@property --dev-bright {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0.35;
+}
+@property --dev-grain {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0.55;
+}
+
+body.is-developed {
+  --dev-contrast: 1.05;
+  --dev-bright: 0.85;
+  --dev-grain: 0.06;
+}
+
+body.is-dropping {
+  animation: drop-invert 140ms steps(1) 1;
+}
+
+@keyframes drop-invert {
+  0%,
+  100% {
+    filter: none;
+  }
+  50% {
+    filter: invert(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.is-dropping {
+    animation: none;
+  }
+}
+
+/* ---- 01 NAME ---- */
+.chapter--name {
+  gap: var(--space-md);
+}
+
+.wordmark {
+  font-family: var(--font-display);
   font-weight: 900;
   letter-spacing: -0.02em;
   text-transform: lowercase;
-  /* Never let "diskevich" break mid-word onto a second line. The clamp()
-     in --fs-display is tuned against Unbounded's metrics; if that font
-     fails to load (slow connection, a content blocker) and the browser
-     falls back to system-ui, the same font-size can render measurably
-     wider and overflow. JS (fitArtistName in main.js) measures the actual
-     rendered width against the available space and shrinks the font-size
-     to fit, on load/resize/font-swap — this nowrap is the safety net for
-     the brief window before that runs: overflow reads better than a
-     word broken across two lines. */
-  white-space: nowrap;
-  /* The wave sits behind at z-index 1; this makes the letterforms invert
-     wherever the line crosses them, so the wave visibly passes *through*
-     the name instead of just running behind a flat opaque shape. Plain
-     z-index stacking (used to keep .scene above the canvas) doesn't create
-     a blend-isolation boundary on its own, so this reaches the canvas.
-
-     This specifically requires a near-black backdrop: difference(X, Y)
-     ~= X only when Y is near zero, which is why it reads as "normal"
-     cream text over dark and only inverts where the (also-cream) wave
-     line crosses it. Over a light backdrop the same math makes the
-     *entire* name render inverted/bright, not just the overlap — so
-     light theme turns this off below and falls back to plain layering
-     (still "the wave passes behind the name", just without the cut). */
-  mix-blend-mode: difference;
-}
-
-:root[data-theme='light'] .artist-name {
-  mix-blend-mode: normal;
-}
-
-/* Rave-burst long-press (main.js): suppresses the native text-selection
-   highlight / iOS callout bubble only for the duration of an active
-   press, toggled by JS. Deliberately not a permanent user-select:none on
-   .artist-name — that would kill the custom ::selection color on the
-   name entirely, which is its own separate, intentional feature. */
-.artist-name.rave-pressing {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
+  line-height: 1;
+  color: var(--color-fg);
+  /* Fits by construction — the container is the viewport minus the one
+     real gutter, divided by the lockup's approximate advance width in
+     Unbounded 900 ("diskevich", ~6.5em) — rather than relying on a JS
+     measurer that raced the font swap and didn't know about a second,
+     nested padding. */
+  font-size: min(11rem, calc((100vw - 2 * var(--gutter)) / 6.5));
 }
 
 .tagline {
-  font-size: var(--fs-tagline);
+  font-size: var(--fs-label);
   font-weight: 400;
   letter-spacing: 0.08em;
   text-transform: lowercase;
   color: var(--color-fg-muted);
 }
 
-/* ---- Deck B panel ----
-   Wordmark / bio / links. Always in the DOM, a plain layout container now
-   (no opacity/transform of its own) — inert/aria-hidden are flipped once,
-   at the top of main.js's startRevealSequence(), and each of its three
-   children (.mark, .bio-text, .links-group) then reveals itself
-   independently and in turn — see .is-revealed further down. */
-.deck-b-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-md);
-  max-width: 42rem;
-  /* Cap matches .scene's own content-box height (100dvh minus .scene's own
-     padding) — not a separately-guessed number. Whatever still doesn't fit
-     (a very short landscape phone, once content is already tightened by
-     the max-height media query below) scrolls internally rather than
-     overflowing past that box. */
-  max-height: calc(100dvh - var(--safe-t) - var(--safe-b) - var(--space-lg) * 2);
-  overflow-y: auto;
-  padding: 0 calc(var(--space-md) + var(--safe-r)) var(--space-sm) calc(var(--space-md) + var(--safe-l));
+/* ---- 02 MANIFESTO ----
+   Off the monospace stack deliberately: at --fs-chapter's ~34px on a
+   375px phone, only ~20 monospace characters fit per line — nowhere near
+   enough for "rare groove is not a genre." Pre-split into <span
+   class="manifesto-line"> elements in main.js/index.html rather than
+   left to wrap on its own, so the breaks are designed, not guessed. */
+.chapter--manifesto {
+  gap: clamp(3rem, 14vh, 6rem);
+  padding-block: calc(var(--space-lg) * 2);
 }
 
-/* The big wordmark reused the full hero display size when it was the only
-   thing on screen (Living Wave concept); here it's one of three stacked
-   reveal groups sharing the scene with bio/links, so it's scaled down
-   considerably to leave room for the rest. */
-.deck-b-panel .artist-name {
-  font-size: clamp(2rem, 8vw, 4.5rem);
-}
-
-/* Short viewports (a phone in landscape, mainly): the panel's natural
-   content height comfortably clears a portrait phone but not a ~375-430px-
-   tall landscape one. Tighten spacing and type here rather than lean on
-   scrolling alone. Deliberately placed *after* the rules it overrides
-   (same specificity either way — two classes — so source order is what
-   actually decides the winner, not the media condition matching). */
-@media (max-height: 480px) {
-  .deck-b-panel {
-    gap: var(--space-xs);
-  }
-
-  .deck-b-panel .artist-name {
-    font-size: clamp(1.4rem, 6vw, 2rem);
-  }
-
-  .deck-b-panel .tagline,
-  .deck-b-panel .bio-text {
-    font-size: var(--fs-small);
-    line-height: 1.5;
-  }
-}
-
-/* ---- Reveal groups ----
-   Each of #deck-b-panel's three children fades and rises into place
-   independently, staggered one at a time by main.js's
-   startRevealSequence() adding .is-revealed — same fade+rise idiom the
-   site has used elsewhere for a one-shot, script-triggered reveal. */
-.deck-b-panel > .mark,
-.deck-b-panel > .bio-text,
-.deck-b-panel > .links-group {
-  opacity: 0;
-  transform: translateY(16px);
+.manifesto-line {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: var(--fs-chapter);
+  line-height: 1.3;
+  color: var(--color-fg);
+  max-width: 22ch;
   transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
 }
 
-.deck-b-panel > .mark.is-revealed,
-.deck-b-panel > .bio-text.is-revealed,
-.deck-b-panel > .links-group.is-revealed {
+/* Visible by default (no-JS baseline) — only the .js class (set by the
+   pre-paint inline script once main.js can run) opts INTO the hidden-
+   until-revealed state, so a visitor without JS gets full manifesto text
+   immediately instead of a permanently-invisible line waiting for an
+   IntersectionObserver that will never fire. */
+.js .manifesto-line {
+  opacity: 0;
+  transform: translateY(0.4em);
+}
+
+.js .manifesto-line.is-revealed {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* ---- 03 WHO ---- */
+.chapter--who {
+  gap: var(--space-lg);
+}
+
+.who-stage {
+  position: relative;
+  width: min(80vw, 22rem);
+  aspect-ratio: 3 / 4;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.who-portrait {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: grayscale(1) contrast(1.1) brightness(0.95);
+}
+
+.who-veil {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: pan-y; /* deliberate: horizontal wipes don't scroll, vertical drags still can */
+}
+
+.who-hint {
+  position: absolute;
+  bottom: var(--space-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  pointer-events: none;
 }
 
 .bio-text {
@@ -465,59 +568,176 @@ body.has-custom-cursor * {
   line-height: 1.7;
   color: var(--color-fg-muted);
   max-width: 36ch;
-  margin: 0 auto;
+}
+
+/* ---- 04 INSTRUMENT ---- */
+.chapter--instrument {
+  padding: 0;
+}
+
+.wave-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  touch-action: none; /* the ONLY touch-action:none on the page */
+}
+
+.instrument-hint {
+  position: absolute;
+  bottom: calc(var(--space-lg) + var(--safe-b));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  font-size: var(--fs-label);
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  pointer-events: none;
+}
+
+.tilt-toggle {
+  position: absolute;
+  top: calc(var(--space-md) + var(--safe-t));
+  right: calc(var(--space-md) + var(--safe-r));
+  z-index: 4;
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--color-fg-muted);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: var(--space-2xs) var(--space-sm);
+  min-height: var(--tap-min);
+  transition: color var(--dur-fast) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
+}
+
+.tilt-toggle.is-active {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+@media (hover: hover) {
+  .tilt-toggle:hover {
+    border-color: var(--color-accent);
+  }
+}
+
+.tilt-toggle:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+/* ---- 05 DATES ---- */
+.chapter--dates {
+  gap: var(--space-md);
 }
 
 .dates-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
+  width: 100%;
+  max-width: 28rem;
 }
 
 .dates-list li {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-xs) var(--space-sm);
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-xs);
   font-family: var(--font-text);
   font-size: var(--fs-body);
+  padding-block: var(--space-sm);
+  border-bottom: 1px solid var(--color-line);
 }
 
 .date-day {
   color: var(--color-accent);
+  font-size: clamp(1.375rem, 5.5vw, 1.75rem);
 }
 
 .date-venue {
   color: var(--color-fg);
 }
 
-/* ---- Social links (deck B panel) ----
-   Icon + small caption rather than bare text — three inline SVGs (no icon
-   font/library), monoline strokes matching the favicon's wave glyph, tinted
-   via currentColor so they inherit the theme automatically. */
+/* ---- 06 LISTEN ---- */
+.chapter--listen {
+  gap: var(--space-lg);
+}
+
+.listen-facade {
+  width: 100%;
+  max-width: 28rem;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  border: 1px solid var(--color-line);
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-fg-muted);
+  font-size: var(--fs-label);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  min-height: var(--tap-min);
+  gap: var(--space-xs);
+  transition: border-color var(--dur-fast) var(--ease-out-expo);
+}
+
+@media (hover: hover) {
+  .listen-facade:hover {
+    border-color: var(--color-accent);
+  }
+}
+
+.listen-facade[data-loaded] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.listen-facade iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 12px;
+}
+
 .social-links {
   display: flex;
-  justify-content: center;
-  gap: var(--space-lg);
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: 28rem;
 }
 
 .social-link {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-2xs);
-  min-width: var(--tap-min);
-  min-height: var(--tap-min);
-  padding: var(--space-2xs);
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 64px;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
   color: var(--color-fg-muted);
   text-decoration: none;
-  transition: color var(--dur-fast) var(--ease-out-expo), transform var(--dur-fast) var(--ease-spring);
+  transition: color var(--dur-fast) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo),
+    background-color var(--dur-fast) var(--ease-out-expo);
+  transform: translate(var(--mag-x, 0), var(--mag-y, 0));
 }
 
-.social-link:hover,
-.social-link:focus-visible {
-  color: var(--color-accent);
+.social-link:active {
+  background-color: var(--color-accent-dim);
+}
+
+@media (hover: hover) {
+  .social-link:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
 }
 
 .social-link:focus-visible {
@@ -530,277 +750,76 @@ body.has-custom-cursor * {
   height: 22px;
   fill: none;
   stroke: currentColor;
+  flex-shrink: 0;
 }
 
 .social-label {
   font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: lowercase;
-}
-
-/* Wraps the social icon row + the "tour dates" link so they reveal
-   together as #deck-b-panel's third stagger step — see .is-revealed
-   above. */
-.links-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.dates-trigger {
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  min-height: var(--tap-min);
-  padding: var(--space-2xs) var(--space-xs);
-  transition: color var(--dur-fast) var(--ease-out-expo);
-}
-
-.dates-trigger:hover,
-.dates-trigger:focus-visible {
-  color: var(--color-accent);
-}
-
-.dates-trigger:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 3px;
-}
-
-/* ---- Tour dates dialog ----
-   Native <dialog>/showModal() gets focus-trapping, Esc-to-close and
-   correct aria-modal semantics for free — see main.js for the (very
-   short) open/close wiring. @starting-style animates it fading+scaling
-   in on open; closing is left as the native instant disappear rather than
-   adding the extra machinery a matching close transition would need, in
-   keeping with how little else on this site choreographs its own exit. */
-.dates-dialog {
-  /* The sitewide `* { margin: 0 }` reset at the top of this file zeroes
-     out <dialog>'s own UA-stylesheet default of `margin: auto`, which is
-     what actually centers it in the viewport when shown via showModal() —
-     without restoring it explicitly here, the dialog renders pinned to
-     the top-left corner instead. */
-  margin: auto;
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  background: var(--color-bg-elevated);
-  color: var(--color-fg);
-  padding: var(--space-lg) var(--space-md);
-  max-width: min(28rem, calc(100vw - var(--space-md) * 2));
-  width: 100%;
-  opacity: 1;
-  transform: scale(1);
-  transition: opacity var(--dur-medium) var(--ease-out-expo), transform var(--dur-medium) var(--ease-out-expo);
-}
-
-@starting-style {
-  .dates-dialog[open] {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-}
-
-.dates-dialog::backdrop {
-  background: var(--color-overlay-bg);
-  opacity: 1;
-  transition: opacity var(--dur-medium) var(--ease-out-expo);
-}
-
-@starting-style {
-  .dates-dialog[open]::backdrop {
-    opacity: 0;
-  }
-}
-
-.dates-dialog-title {
-  font-family: var(--font-display);
-  font-size: var(--fs-h2);
-  text-align: center;
-  text-transform: lowercase;
-  margin-bottom: var(--space-md);
-}
-
-.dates-dialog .dates-list {
-  margin-bottom: var(--space-md);
-}
-
-.dates-dialog-close {
-  display: block;
-  margin: 0 auto;
-  font-family: var(--font-text);
-  font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: lowercase;
-  color: var(--color-fg-muted);
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  padding: var(--space-xs) var(--space-md);
-  min-height: var(--tap-min);
-  transition: color var(--dur-fast) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
-}
-
-.dates-dialog-close:hover,
-.dates-dialog-close:focus-visible {
-  color: var(--color-fg);
-  border-color: var(--color-accent);
-}
-
-.dates-dialog-close:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 3px;
-}
-
-/* ---- Entry gate ----
-   The site's only entry gesture: tap/click anywhere (main.js listens on
-   `window`, not just this button) wakes the wave and starts the track.
-   Full-viewport but pointer-events: none itself, so it never blocks
-   anything — only the button inside opts back in. Fades out for good once
-   awake, mirroring the fader-hint idiom this replaces. */
-.entry-gate {
-  position: fixed;
-  inset: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.entry-hint {
-  pointer-events: auto;
-  font-family: var(--font-text);
   font-size: var(--fs-body);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   text-transform: lowercase;
-  color: var(--color-fg);
-  background: transparent;
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  padding: var(--space-sm) var(--space-lg);
-  min-height: var(--tap-min);
-  opacity: 1;
-  transition: opacity var(--dur-medium) var(--ease-out-expo), border-color var(--dur-fast) var(--ease-out-expo);
 }
 
-.entry-hint:hover,
-.entry-hint:focus-visible {
-  border-color: var(--color-accent);
-}
-
-.entry-hint:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 4px;
-}
-
-/* --dur-medium zeroes under prefers-reduced-motion, so this just
-   disappears instantly there instead of via a fade, matching the rest of
-   the site's reduced-motion handling. */
-body[data-state='awake'] .entry-hint {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* ---- Mute toggle ---- */
-.mute-toggle {
+/* ==========================================================================
+   Bottom rail — replaces the old top-corner mute/theme toggles. Fixed,
+   safe-area aware, chapter progress dots + a live energy meter (what your
+   own input is feeding the wave) + theme.
+   ========================================================================== */
+.rail {
   position: fixed;
-  top: calc(var(--space-md) + var(--safe-t));
-  right: calc(var(--space-md) + var(--safe-r));
-  z-index: 3;
-  width: var(--tap-min);
-  height: var(--tap-min);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  height: calc(var(--rail-h) + var(--safe-b));
+  padding: 0 calc(var(--space-md) + var(--safe-r)) var(--safe-b) calc(var(--space-md) + var(--safe-l));
   display: flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid var(--color-line);
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--color-overlay-bg);
+  border-top: 1px solid var(--color-line);
+}
+
+.rail-dots {
+  display: flex;
+  gap: var(--space-2xs);
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-dots > span {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-  transition: border-color var(--dur-fast) var(--ease-out-expo), opacity var(--dur-medium) var(--ease-out-expo),
-    transform var(--dur-fast) var(--ease-spring);
+  background: var(--color-line);
+  transition: background-color var(--dur-fast) var(--ease-out-expo), transform var(--dur-fast) var(--ease-spring);
 }
 
-/* Hidden until entry's been triggered — there's nothing to mute before
-   then anyway (audio hasn't started). pointer-events stays off until the
-   same moment, so this invisible button can't swallow a click meant for
-   the page-wide entry gesture. --dur-medium zeroes under reduced motion,
-   so it just appears instantly there instead of fading. */
-body[data-state='awake'] .mute-toggle {
-  opacity: 1;
-  pointer-events: auto;
+.rail-dots > span.is-active {
+  background: var(--color-accent);
+  transform: scale(1.6);
 }
 
-.mute-toggle:hover,
-.mute-toggle:focus-visible {
-  border-color: var(--color-accent);
-}
-
-/* ---- Micro-VU pulse (Phase 8) ----
-   Cheapest of the three new accents, and the one that needs no vendored
-   library at all: main.js's frameLoop() writes --band-bass (0..1, already
-   EMA-smoothed by AudioEngine) on <html> once per frame while awake — same
-   idiom as --mix. box-shadow only, deliberately no transform: .mute-toggle
-   carries [data-magnetic], and Magnetic (main.js) writes el.style.transform
-   directly on every registered element on every mousemove frame — an inline
-   style that would silently win over any transform declared here, so a
-   scale-based pulse would almost never actually be visible. box-shadow has
-   no such conflict. Falls back to 0 via the var() default whenever the
-   writer stops (sleeping, muted — see AudioEngine's "gain before analyser"
-   comment for why muting already decays this to 0 on its own — or reduced
-   motion, guarded below). */
-.mute-toggle {
-  box-shadow: 0 0 0 calc(var(--band-bass, 0) * 10px) var(--color-accent-dim);
+.rail-energy {
+  --energy: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--color-line);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 calc(var(--energy) * 8px) var(--color-accent-dim);
+  background: radial-gradient(circle, var(--color-accent) calc(var(--energy) * 40%), transparent 41%);
+  transition: box-shadow var(--dur-instant) linear;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mute-toggle {
+  .rail-energy {
     box-shadow: none;
   }
 }
 
-.mute-toggle:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 3px;
-}
-
-/* Two SVGs per button (on/off, sun/moon), CSS toggles which is shown —
-   distinct pictograms rather than a shared dot/ring language, so the two
-   controls read as different actions (audio vs. appearance) at a glance. */
-.mute-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--color-accent);
-  transition: color var(--dur-fast) var(--ease-out-expo);
-}
-
-.mute-icon--off {
-  display: none;
-}
-
-body[data-muted='true'] .mute-icon--on {
-  display: none;
-}
-
-body[data-muted='true'] .mute-icon--off {
-  display: block;
-  color: var(--color-fg-muted);
-}
-
-/* ---- Theme toggle ----
-   z-index 11, above everything else on the page: visual comfort should be
-   adjustable immediately on landing, before entry's even been triggered —
-   a light-sensitive visitor shouldn't have to sit through a full-brightness
-   dark screen just to reach the switch. Unlike mute-toggle, always visible
-   from load (nothing here is gated on 'awake'). */
 .theme-toggle {
-  position: fixed;
-  top: calc(var(--space-md) + var(--safe-t));
-  left: calc(var(--space-md) + var(--safe-l));
-  z-index: 11;
   width: var(--tap-min);
   height: var(--tap-min);
   display: flex;
@@ -808,12 +827,18 @@ body[data-muted='true'] .mute-icon--off {
   justify-content: center;
   border: 1px solid var(--color-line);
   border-radius: 50%;
+  flex-shrink: 0;
   transition: border-color var(--dur-fast) var(--ease-out-expo), transform var(--dur-fast) var(--ease-spring);
 }
 
-.theme-toggle:hover,
-.theme-toggle:focus-visible {
-  border-color: var(--color-accent);
+@media (hover: hover) {
+  .theme-toggle:hover {
+    border-color: var(--color-accent);
+  }
+}
+
+.theme-toggle:active {
+  transform: scale(0.92);
 }
 
 .theme-toggle:focus-visible {
@@ -837,4 +862,19 @@ body[data-muted='true'] .mute-icon--off {
 
 :root[data-theme='light'] .theme-icon--moon {
   display: none;
+}
+
+/* ==========================================================================
+   No-JS baseline — everything above is authored visible-by-default; JS
+   opts INTO the hidden-then-revealed state via the .js class (set by the
+   pre-paint inline script in index.html's <head>, so there's no flash).
+   Without JS: full-size text, live links, readable dates, visible
+   portrait, no canvas, page scrolls normally.
+   ========================================================================== */
+html:not(.js) {
+  scroll-snap-type: none;
+}
+html:not(.js):not([data-entered]) {
+  overflow: visible;
+  height: auto;
 }
