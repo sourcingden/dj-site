@@ -433,7 +433,11 @@ body[data-state='awake'] .gate__hint {
 
 body.is-developed {
   --dev-contrast: 1.05;
-  --dev-bright: 0.85;
+  /* >1 on purpose: the actual portrait measures ~32% mean luminance (a
+     moody, underlit shot), so anything <=1 here still reads dark after
+     "developing" — checked against the real file's histogram, x1.15 keeps
+     highlight clipping (shirt collar/forehead) under 1% of pixels. */
+  --dev-bright: 1.15;
   --dev-grain: 0.06;
 }
 
